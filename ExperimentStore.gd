@@ -18,6 +18,7 @@ func save_experiment(
 	thinking: String,
 	effort: String,
 	max_tokens: int,
+	temperature: float,
 	messages: Array,
 	raw_messages: Array,
 	request_body: String,
@@ -58,6 +59,7 @@ func save_experiment(
 	file.store_string("thinking: \"%s\"\n" % thinking)
 	file.store_string("effort: \"%s\"\n" % effort)
 	file.store_string("max_tokens: %d\n" % max_tokens)
+	file.store_string("temperature: %.1f\n" % temperature)
 	file.store_string("---\n\n")
 
 	file.store_string("## messages（原始积木，reasoning 与 content 分离）\n\n")

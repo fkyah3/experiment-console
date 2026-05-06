@@ -44,6 +44,10 @@ layout_mode = 2
 unique_name_in_owner = true
 layout_mode = 2
 
+[node name="ParamsTemperature" type="SpinBox" parent="VBox/ParamsPanel/ParamsHBox"]
+unique_name_in_owner = true
+layout_mode = 2
+
 [node name="ParamsTitle" type="LineEdit" parent="VBox/ParamsPanel/ParamsHBox" unique_id=574428605]
 unique_name_in_owner = true
 layout_mode = 2

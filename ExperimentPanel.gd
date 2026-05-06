@@ -19,11 +19,13 @@ var _model: String = "deepseek-v4-flash"
 var _thinking: String = "enabled"
 var _effort: String = "high"
 var _max_tokens: int = 4096
+var _temperature: float = 0.0
 
 @onready var params_model: OptionButton = %ParamsModel
 @onready var params_thinking: OptionButton = %ParamsThinking
 @onready var params_effort: OptionButton = %ParamsEffort
 @onready var params_max_tokens: SpinBox = %ParamsMaxTokens
+@onready var params_temperature: SpinBox = %ParamsTemperature
 @onready var params_title: LineEdit = %ParamsTitle
 
 @onready var msg_list: VBoxContainer = %MsgList
@@ -79,6 +81,12 @@ func _build_dynamic() -> void:
 	params_max_tokens.value = _max_tokens
 	params_max_tokens.value_changed.connect(func(v: float): _max_tokens = int(v))
 
+	params_temperature.min_value = 0.0
+	params_temperature.max_value = 2.0
+	params_temperature.step = 0.1
+	params_temperature.value = _temperature
+	params_temperature.value_changed.connect(func(v: float): _temperature = v)
+
 	_params_add()
 	_populate_add_btn()
 	_connect_signals()
@@ -91,7 +99,7 @@ func _params_add() -> void:
 	var hbox: HBoxContainer = get_node_or_null("VBox/ParamsPanel/ParamsHBox")
 	if hbox == null:
 		return
-	var labels := ["模型", "思考模式", "推理强度", "max_tokens", "实验标题"]
+	var labels := ["模型", "思考模式", "推理强度", "max_tokens", "温度", "实验标题"]
 	for i in labels.size():
 		var lbl := Label.new()
 		lbl.text = labels[i]
@@ -444,6 +452,7 @@ func _on_send() -> void:
 	if _effort != "不传":
 		body_dict["reasoning_effort"] = _effort
 	body_dict["max_tokens"] = _max_tokens
+	body_dict["temperature"] = _temperature
 
 	var body_str := JSON.stringify(body_dict, "\t")
 	log_request.text = body_str
@@ -568,7 +577,7 @@ func _on_save() -> void:
 
 	var msgs_to_send := _build_api_messages()
 	var fpath := _store.save_experiment(
-		title, _model, _thinking, _effort, _max_tokens,
+		title, _model, _thinking, _effort, _max_tokens, _temperature,
 		msgs_to_send, _messages,
 		log_request.text, _last_response_body,
 		_last_usage, notes_input.text
