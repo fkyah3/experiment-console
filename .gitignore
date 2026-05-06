@@ -4,6 +4,9 @@
 *.uid
 *.import
 
+# 编辑器插件（开发工具，不提交）
+addons/
+
 # OS
 .DS_Store
 Thumbs.db
