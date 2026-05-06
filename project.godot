@@ -1,0 +1,11 @@
+; Engine configuration file.
+; It's best to edit using the editor, not this file.
+
+[application]
+config/name="ExperimentConsole"
+config/description="AI 消息积木实验台 - 直连 DeepSeek API"
+run/main_scene="res://ExperimentPanel.tscn"
+config/icon="res://icon.svg"
+
+[rendering]
+renderer/rendering_method="forward_plus"
