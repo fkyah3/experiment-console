@@ -1,6 +1,6 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://ptugnfd3wvfw"]
 
-[ext_resource type="Script" path="res://ExperimentPanel.gd" id="1"]
+[ext_resource type="Script" uid="uid://d0txqfi4wnjed" path="res://ExperimentPanel.gd" id="1"]
 
 [node name="ExperimentPanel" type="Control" unique_id=2077890034]
 layout_mode = 3
@@ -44,7 +44,7 @@ layout_mode = 2
 unique_name_in_owner = true
 layout_mode = 2
 
-[node name="ParamsTemperature" type="SpinBox" parent="VBox/ParamsPanel/ParamsHBox"]
+[node name="ParamsTemperature" type="SpinBox" parent="VBox/ParamsPanel/ParamsHBox" unique_id=1670889509]
 unique_name_in_owner = true
 layout_mode = 2
 
@@ -127,15 +127,20 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "查看请求体"
 
-[node name="TemplateBtn" type="MenuButton" parent="VBox/ActionBar"]
+[node name="TemplateBtn" type="MenuButton" parent="VBox/ActionBar" unique_id=766428672]
 unique_name_in_owner = true
 layout_mode = 2
 text = "📋 模板"
 
-[node name="SettingsBtn" type="Button" parent="VBox/ActionBar"]
+[node name="SettingsBtn" type="Button" parent="VBox/ActionBar" unique_id=504507145]
 unique_name_in_owner = true
 layout_mode = 2
 text = "⚙ 设置"
+
+[node name="BatchBtn" type="Button" parent="VBox/ActionBar" unique_id=1569708058]
+unique_name_in_owner = true
+layout_mode = 2
+text = "🧪 批量"
 
 [node name="LogPanel" type="PanelContainer" parent="VBox" unique_id=1285604495]
 layout_mode = 2

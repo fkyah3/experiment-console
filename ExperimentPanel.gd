@@ -21,6 +21,17 @@ var _effort: String = "high"
 var _max_tokens: int = 4096
 var _temperature: float = 0.0
 
+var _batch_queue: Array = []
+var _batch_running: int = 0
+var _batch_done: int = 0
+var _batch_failed: int = 0
+var _batch_total: int = 0
+var _batch_dir: String = ""
+var _batch_save_store: ExperimentStore
+var _batch_stats: Array[Dictionary] = []
+var _batch_prototype_messages: Array = []
+const BATCH_CONCURRENCY: int = 5
+
 @onready var params_model: OptionButton = %ParamsModel
 @onready var params_thinking: OptionButton = %ParamsThinking
 @onready var params_effort: OptionButton = %ParamsEffort
@@ -39,6 +50,7 @@ var _temperature: float = 0.0
 @onready var view_req_btn: Button = %ViewReqBtn
 @onready var template_btn: MenuButton = %TemplateBtn
 @onready var settings_btn: Button = %SettingsBtn
+@onready var batch_btn: Button = %BatchBtn
 
 @onready var log_request: TextEdit = %LogRequest
 @onready var log_response: TextEdit = %LogResponse
@@ -124,6 +136,7 @@ func _connect_signals() -> void:
 	clear_btn.pressed.connect(_on_clear)
 	view_req_btn.pressed.connect(_show_request_body)
 	settings_btn.pressed.connect(_open_settings)
+	batch_btn.pressed.connect(_on_batch_run)
 	_populate_template_menu()
 
 
@@ -134,6 +147,8 @@ func _build_settings_menu() -> void:
 func _populate_template_menu() -> void:
 	var popup := template_btn.get_popup()
 	popup.clear()
+	if popup.id_pressed.is_connected(_on_template_selected):
+		popup.id_pressed.disconnect(_on_template_selected)
 	var templates := _store.list_templates()
 	for t in templates:
 		var tname: String = t.get("name", "")
@@ -141,6 +156,7 @@ func _populate_template_menu() -> void:
 	if popup.item_count > 0:
 		popup.add_separator("")
 	popup.add_item("💾 保存当前为模板")
+	popup.add_item("🗑 删除模板")
 	popup.id_pressed.connect(_on_template_selected)
 
 
@@ -149,6 +165,9 @@ func _on_template_selected(id: int) -> void:
 	var item_text: String = popup.get_item_text(id)
 	if item_text.begins_with("💾"):
 		_save_current_as_template()
+		return
+	if item_text.begins_with("🗑"):
+		_show_delete_template_dialog()
 		return
 	var t := _store.load_template(item_text)
 	if t.is_empty():
@@ -181,6 +200,47 @@ func _save_current_as_template() -> void:
 	)
 	vbox.add_child(done_btn)
 	dialog.add_child(vbox)
+	add_child(dialog)
+	dialog.popup_centered()
+	await dialog.tree_exited
+
+
+func _show_delete_template_dialog() -> void:
+	var dialog := AcceptDialog.new()
+	dialog.title = "删除模板"
+	dialog.min_size = Vector2(350, 200)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var vbox := VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var templates := _store.list_templates()
+	if templates.is_empty():
+		vbox.add_child(_make_label("没有已保存的模板。"))
+	else:
+		for t in templates:
+			var tname: String = t.get("name", "")
+			var row := HBoxContainer.new()
+			row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var label := Label.new()
+			label.text = tname
+			label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(label)
+			var del_btn := Button.new()
+			del_btn.text = "删除"
+			del_btn.pressed.connect(func(n := tname):
+				_store.delete_template(n)
+				dialog.queue_free()
+				_show_delete_template_dialog()
+				_populate_template_menu()
+				_set_status("已删除模板: " + n)
+			)
+			row.add_child(del_btn)
+			vbox.add_child(row)
+
+	scroll.add_child(vbox)
+	dialog.add_child(scroll)
 	add_child(dialog)
 	dialog.popup_centered()
 	await dialog.tree_exited
@@ -500,6 +560,8 @@ func _build_api_messages() -> Array:
 
 
 func _on_content_chunk(text: String, msg_idx: int) -> void:
+	if msg_idx < 0 or msg_idx >= _messages.size():
+		return
 	_accumulated_content += text
 	_messages[msg_idx]["content"] = _accumulated_content
 	_update_block_preview(msg_idx)
@@ -507,6 +569,8 @@ func _on_content_chunk(text: String, msg_idx: int) -> void:
 
 
 func _on_reasoning_chunk(text: String, msg_idx: int) -> void:
+	if msg_idx < 0 or msg_idx >= _messages.size():
+		return
 	_accumulated_reasoning += text
 	_messages[msg_idx]["reasoning"] = _accumulated_reasoning
 	_update_block_preview(msg_idx)
@@ -517,9 +581,10 @@ func _on_stream_finished(_body_str: String) -> void:
 	_set_status("流式接收完成")
 	send_btn.disabled = false
 
-	_messages[_messages.size() - 1]["content"] = _accumulated_content
-	_messages[_messages.size() - 1]["reasoning"] = _accumulated_reasoning
-	_rebuild_list()
+	if not _messages.is_empty():
+		_messages[_messages.size() - 1]["content"] = _accumulated_content
+		_messages[_messages.size() - 1]["reasoning"] = _accumulated_reasoning
+		_rebuild_list()
 
 	_last_response_body = JSON.stringify({
 		"choices": [{
@@ -533,8 +598,9 @@ func _on_stream_finished(_body_str: String) -> void:
 	}, "\t")
 	log_response.text = _last_response_body
 
-	_deepseek.queue_free()
-	_deepseek = null
+	if _deepseek:
+		_deepseek.queue_free()
+		_deepseek = null
 
 
 func _on_usage_received(usage: Dictionary) -> void:
@@ -689,6 +755,369 @@ func _open_settings() -> void:
 	add_child(dialog)
 	dialog.popup_centered()
 	await dialog.tree_exited
+
+
+func _on_batch_run() -> void:
+	var dialog := AcceptDialog.new()
+	dialog.title = "批量运行"
+	dialog.min_size = Vector2(350, 150)
+
+	var vbox := VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 8)
+
+	vbox.add_child(_make_label("运行次数"))
+	var count_input := SpinBox.new()
+	count_input.min_value = 1
+	count_input.max_value = 100
+	count_input.value = 20
+	count_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(count_input)
+
+	vbox.add_child(_make_label("批次名称（可选）"))
+	var batch_name_input := LineEdit.new()
+	batch_name_input.placeholder_text = "会追加到目录名上"
+	batch_name_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(batch_name_input)
+
+	var start_btn := Button.new()
+	start_btn.text = "开始"
+	start_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	start_btn.pressed.connect(func():
+		var count := int(count_input.value)
+		var bname := batch_name_input.text.strip_edges()
+		dialog.queue_free()
+		_start_batch(count, bname)
+	)
+	vbox.add_child(start_btn)
+
+	dialog.add_child(vbox)
+	add_child(dialog)
+	dialog.popup_centered()
+	await dialog.tree_exited
+
+
+func _start_batch(count: int, batch_name: String) -> void:
+	if _messages.is_empty():
+		_set_status("消息列表为空，无法批量运行")
+		return
+
+	_batch_total = count
+	_batch_done = 0
+	_batch_failed = 0
+	_batch_running = 0
+	_batch_stats.clear()
+	_batch_prototype_messages = _messages.duplicate(true)
+
+	var now := Time.get_datetime_dict_from_system()
+	var dir_name := "batch_%04d%02d%02d_%02d%02d" % [now.year, now.month, now.day, now.hour, now.minute]
+	if not batch_name.is_empty():
+		dir_name += "_" + batch_name.left(20)
+	_batch_dir = _config.experiments_path.path_join(dir_name)
+	_batch_save_store = ExperimentStore.new(_batch_dir, _config.templates_path)
+
+	_batch_queue.clear()
+	var raw_copies: Array = _messages.duplicate(true)
+	for i in count:
+		_batch_queue.append(raw_copies.duplicate(true))
+
+	_set_status("批量 %d 次开始，5 个并发..." % count)
+	for i in min(BATCH_CONCURRENCY, count):
+		_start_batch_worker()
+
+
+func _start_batch_worker() -> void:
+	if _batch_queue.is_empty():
+		return
+	var raw_messages: Array = _batch_queue.pop_front()
+	var api_messages := _build_api_messages_for(raw_messages)
+
+	var body_dict := {
+		"model": _model,
+		"messages": api_messages,
+		"stream": true,
+	}
+	if _thinking == "enabled":
+		body_dict["thinking"] = {"type": "enabled"}
+	if _effort != "不传":
+		body_dict["reasoning_effort"] = _effort
+	body_dict["max_tokens"] = _max_tokens
+	body_dict["temperature"] = _temperature
+	var body_str := JSON.stringify(body_dict, "\t")
+
+	var client := DeepSeekStreamClient.new()
+	add_child(client)
+	client.api_key = api_key
+
+	var wd: Dictionary = {
+		"client": client,
+		"raw_messages": raw_messages,
+		"api_messages": api_messages,
+		"body_str": body_str,
+		"content": "",
+		"reasoning": "",
+		"response_body": "",
+		"usage": {},
+		"ok": false,
+		"index": _batch_total - _batch_queue.size() - _batch_running,
+	}
+
+	_batch_running += 1
+	client.content_chunk.connect(_on_batch_content_chunk.bind(wd))
+	client.reasoning_chunk.connect(_on_batch_reasoning_chunk.bind(wd))
+	client.stream_finished.connect(_on_batch_worker_done.bind(wd))
+	client.usage_received.connect(_on_batch_usage.bind(wd))
+	client.connection_error.connect(_on_batch_worker_error.bind(wd))
+	client.start_streaming(api_messages)
+	_set_status("批量 %d/%d | 运行中 %d | 失败 %d" % [_batch_done + _batch_failed, _batch_total, _batch_running, _batch_failed])
+
+
+func _on_batch_content_chunk(text: String, wd: Dictionary) -> void:
+	wd.content += text
+
+
+func _on_batch_reasoning_chunk(text: String, wd: Dictionary) -> void:
+	wd.reasoning += text
+
+
+func _on_batch_usage(usage: Dictionary, wd: Dictionary) -> void:
+	wd.usage = usage
+
+
+func _on_batch_worker_done(wd: Dictionary) -> void:
+	wd.response_body = JSON.stringify({
+		"choices": [{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"content": wd.content,
+				"reasoning_content": wd.reasoning,
+			}
+		}]
+	}, "\t")
+	wd.ok = true
+	_finish_batch_worker(wd)
+
+
+func _on_batch_worker_error(msg: String, wd: Dictionary) -> void:
+	push_warning("Batch worker #%d error: %s" % [wd.index, msg])
+	wd.ok = false
+	_finish_batch_worker(wd)
+
+
+func _finish_batch_worker(wd: Dictionary) -> void:
+	if wd.client:
+		wd.client.queue_free()
+
+	_batch_running -= 1
+
+	if wd.ok:
+		var title := params_title.text.strip_edges()
+		if title.is_empty():
+			title = "batch_%03d" % wd.index
+		_batch_save_store.save_experiment(
+			title, _model, _thinking, _effort, _max_tokens, _temperature,
+			wd.api_messages, wd.raw_messages,
+			wd.body_str, wd.response_body, wd.usage, ""
+		)
+		_batch_stats.append(_calc_worker_stats(wd))
+		_batch_done += 1
+	else:
+		_batch_failed += 1
+
+	_set_status("批量 %d/%d | 运行中 %d | 失败 %d" % [_batch_done + _batch_failed, _batch_total, _batch_running, _batch_failed])
+
+	if _batch_done + _batch_failed >= _batch_total:
+		_generate_batch_summary()
+		_set_status("批量完成：成功 %d / %d，失败 %d" % [_batch_done, _batch_total, _batch_failed])
+		return
+
+	if not _batch_queue.is_empty():
+		_start_batch_worker()
+
+
+func _calc_worker_stats(wd: Dictionary) -> Dictionary:
+	var s: Dictionary = {}
+	s["index"] = wd.index
+	s["ok"] = true
+	if not wd.usage.is_empty():
+		s["reasoning_tokens"] = wd.usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+		s["prompt_tokens"] = wd.usage.get("prompt_tokens", 0)
+		s["completion_tokens"] = wd.usage.get("completion_tokens", 0)
+		s["total_tokens"] = wd.usage.get("total_tokens", 0)
+	s["reasoning_chars"] = wd.reasoning.length()
+	s["output_chars"] = wd.content.length()
+	s["reasoning_language"] = _detect_language_str(wd.reasoning)
+	s["output_language"] = _detect_language_str(wd.content)
+	s["reasoning_first_line"] = wd.reasoning.left(80).replace("\n", " ")
+	s["output_first_line"] = wd.content.left(80).replace("\n", " ")
+	return s
+
+
+func _detect_language_str(text: String) -> String:
+	if text.is_empty():
+		return "empty"
+	var chinese_count := 0
+	var total := 0
+	for c in text:
+		var unicode := c.unicode_at(0)
+		if unicode >= 0x4E00 and unicode <= 0x9FFF:
+			chinese_count += 1
+		if unicode >= 0x0020:
+			total += 1
+	if total == 0:
+		return "unknown"
+	var ratio := float(chinese_count) / float(total)
+	if ratio > 0.1:
+		return "zh"
+	return "en"
+
+
+func _generate_batch_summary() -> void:
+	var lines: Array[String] = []
+	lines.append("# 批量实验汇总\n")
+	lines.append("---\n")
+	lines.append("\n")
+	var now := Time.get_datetime_dict_from_system()
+	var created := "%04d-%02d-%02d %02d:%02d:%02d" % [now.year, now.month, now.day, now.hour, now.minute, now.second]
+	lines.append("- **生成时间**: %s\n" % created)
+	lines.append("- **模型**: %s\n" % _model)
+	lines.append("- **思考模式**: %s\n" % _thinking)
+	lines.append("- **推理强度**: %s\n" % _effort)
+	lines.append("- **max_tokens**: %d\n" % _max_tokens)
+	lines.append("- **温度**: %.1f\n" % _temperature)
+	lines.append("- **总次数**: %d\n" % _batch_total)
+	lines.append("- **成功**: %d\n" % _batch_done)
+	lines.append("- **失败**: %d\n" % _batch_failed)
+	lines.append("\n")
+
+	lines.append("## 本次使用的 prompt\n\n")
+	lines.append("```\n")
+	var has_prompt := false
+	for m in _batch_prototype_messages:
+		var role: String = str(m.get("role", ""))
+		var content: String = str(m.get("content", ""))
+		var reasoning: String = str(m.get("reasoning", ""))
+		if role == "system":
+			lines.append("[system]\n%s\n\n" % content)
+			has_prompt = true
+		elif role == "user":
+			lines.append("[user]\n%s\n\n" % content)
+			has_prompt = true
+		elif role == "assistant" and not content.is_empty():
+			lines.append("[assistant]\n%s\n\n" % content)
+		elif role == "assistant" and not reasoning.is_empty():
+			lines.append("[assistant reasoning]\n%s\n\n" % reasoning)
+		elif role == "tool":
+			lines.append("[tool]\n%s\n\n" % content)
+	if not has_prompt:
+		lines.append("（空）\n")
+	lines.append("```\n")
+	lines.append("\n")
+
+	if _batch_stats.is_empty():
+		lines.append("无成功数据。\n")
+	else:
+		var reasoning_vals: Array[int] = []
+		var prompt_vals: Array[int] = []
+		var completion_vals: Array[int] = []
+		var total_vals: Array[int] = []
+		var zh_count: int = 0
+		var en_count: int = 0
+		for s in _batch_stats:
+			var rt: int = int(s.get("reasoning_tokens", 0))
+			reasoning_vals.append(rt)
+			prompt_vals.append(int(s.get("prompt_tokens", 0)))
+			completion_vals.append(int(s.get("completion_tokens", 0)))
+			total_vals.append(int(s.get("total_tokens", 0)))
+			match s.get("reasoning_language", ""):
+				"zh": zh_count += 1
+				"en": en_count += 1
+
+		var r_min: int = reasoning_vals.min()
+		var r_max: int = reasoning_vals.max()
+		var r_sum: int = 0
+		for v in reasoning_vals: r_sum += v
+		var r_avg: float = float(r_sum) / float(reasoning_vals.size())
+		var r_median: float = _median(reasoning_vals)
+
+		lines.append("## 汇总统计\n\n")
+		lines.append("| 指标 | 值 |\n")
+		lines.append("|:-----|:----|\n")
+		lines.append("| reasoning_tokens 最小值 | %d |\n" % r_min)
+		lines.append("| reasoning_tokens 最大值 | %d |\n" % r_max)
+		lines.append("| reasoning_tokens 平均值 | %.1f |\n" % r_avg)
+		lines.append("| reasoning_tokens 中位数 | %.1f |\n" % r_median)
+		lines.append("| 波动倍数（max/min） | %.1f |\n" % (float(r_max) / float(max(1, r_min))))
+		lines.append("| prompt_tokens 平均值 | %.1f |\n" % (float(_sum(prompt_vals)) / float(prompt_vals.size())))
+		lines.append("| completion_tokens 平均值 | %.1f |\n" % (float(_sum(completion_vals)) / float(completion_vals.size())))
+		lines.append("| total_tokens 平均值 | %.1f |\n" % (float(_sum(total_vals)) / float(total_vals.size())))
+		lines.append("| reasoning 中文占比 | %d / %d (%.1f%%) |\n" % [zh_count, _batch_stats.size(), float(zh_count) / float(_batch_stats.size()) * 100.0])
+		lines.append("| reasoning 英文占比 | %d / %d (%.1f%%) |\n" % [en_count, _batch_stats.size(), float(en_count) / float(_batch_stats.size()) * 100.0])
+		lines.append("\n")
+
+		lines.append("## 每轮明细\n\n")
+		lines.append("| # | reasoning_tokens | reasoning_lang | output_lang | reasoning_chars | output_chars | reasoning 前80字 |\n")
+		lines.append("|:-:|:---------------:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
+		for s in _batch_stats:
+			var idx: int = int(s.get("index", 0))
+			var rt: int = int(s.get("reasoning_tokens", 0))
+			var rl: String = str(s.get("reasoning_language", "?"))
+			var ol: String = str(s.get("output_language", "?"))
+			var rc: int = int(s.get("reasoning_chars", 0))
+			var oc: int = int(s.get("output_chars", 0))
+			var first: String = str(s.get("reasoning_first_line", ""))
+			lines.append("| %d | %d | %s | %s | %d | %d | %s |\n" % [idx, rt, rl, ol, rc, oc, first])
+
+	lines.append("\n")
+	lines.append("---\n")
+
+	var summary_path := _batch_dir.path_join("_summary.md")
+	var file := FileAccess.open(summary_path, FileAccess.WRITE)
+	if file:
+		for line in lines:
+			file.store_string(line)
+		file.close()
+
+
+func _sum(arr: Array[int]) -> int:
+	var total := 0
+	for v in arr:
+		total += v
+	return total
+
+
+func _median(arr: Array[int]) -> float:
+	if arr.is_empty():
+		return 0.0
+	var sorted := arr.duplicate()
+	sorted.sort()
+	var mid := int(sorted.size() * 0.5)
+	if sorted.size() % 2 == 0:
+		return (sorted[mid - 1] + sorted[mid]) / 2.0
+	return float(sorted[mid])
+
+
+func _build_api_messages_for(raw: Array) -> Array:
+	var result: Array = []
+	for m in raw:
+		var msg: Dictionary = {"role": m.get("role", "user")}
+		var content: String = m.get("content", "")
+		var reasoning: String = m.get("reasoning", "")
+
+		if msg["role"] == "assistant":
+			if not reasoning.is_empty():
+				if not content.is_empty():
+					msg["content"] = reasoning + "\n" + content
+				else:
+					msg["reasoning_content"] = reasoning
+					msg["content"] = null
+
+		if not content.is_empty() and not msg.has("content"):
+			msg["content"] = content
+
+		result.append(msg)
+	return result
 
 
 func _scroll_to_bottom() -> void:

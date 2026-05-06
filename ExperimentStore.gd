@@ -88,6 +88,13 @@ func save_experiment(
 		file.store_string(JSON.stringify(usage, "\t"))
 		file.store_string("\n```\n\n")
 
+	var stats := _compute_stats(response_body, usage)
+	if not stats.is_empty():
+		file.store_string("## stats\n\n")
+		file.store_string("```json\n")
+		file.store_string(JSON.stringify(stats, "\t"))
+		file.store_string("\n```\n\n")
+
 	if not notes.is_empty():
 		file.store_string("## notes\n\n")
 		file.store_string(notes)
@@ -193,6 +200,67 @@ func seed_builtin_templates() -> void:
 		{"role": "user", "content": "我表妹叫我奶奶什么？"},
 	])
 	save_template("自定义（空）", "deepseek-v4-flash", "enabled", "high", 4096, [])
+
+
+func _compute_stats(response_body: String, usage: Dictionary) -> Dictionary:
+	var stats: Dictionary = {}
+	if response_body.is_empty():
+		return stats
+
+	if not usage.is_empty():
+		stats["reasoning_tokens"] = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+		stats["prompt_tokens"] = usage.get("prompt_tokens", 0)
+		stats["completion_tokens"] = usage.get("completion_tokens", 0)
+		stats["total_tokens"] = usage.get("total_tokens", 0)
+
+	var parsed = JSON.parse_string(response_body) as Dictionary
+	if parsed == null:
+		return stats
+
+	var choices: Array = parsed.get("choices", [])
+	if choices.is_empty():
+		return stats
+
+	var message: Dictionary = choices[0].get("message", {})
+	var reasoning_content: String = message.get("reasoning_content", "")
+	var content: String = message.get("content", "")
+
+	stats["has_reasoning"] = not reasoning_content.is_empty()
+	stats["reasoning_language"] = _detect_language(reasoning_content)
+	stats["output_language"] = _detect_language(content)
+
+	if not reasoning_content.is_empty():
+		var rlen := reasoning_content.length()
+		stats["reasoning_chars"] = rlen
+		if rlen > 0:
+			stats["reasoning_first_line"] = reasoning_content.left(80).replace("\n", " ")
+
+	if not content.is_empty():
+		var clen := content.length()
+		stats["output_chars"] = clen
+		if clen > 0:
+			stats["output_first_line"] = content.left(80).replace("\n", " ")
+
+	return stats
+
+
+func _detect_language(text: String) -> String:
+	if text.is_empty():
+		return "empty"
+	var chinese_count := 0
+	var total := 0
+	for c in text:
+		var unicode := c.unicode_at(0)
+		if unicode >= 0x4E00 and unicode <= 0x9FFF:
+			chinese_count += 1
+		if unicode >= 0x0020:
+			total += 1
+	if total == 0:
+		return "unknown"
+	var ratio := float(chinese_count) / float(total)
+	if ratio > 0.1:
+		return "zh"
+	return "en"
 
 
 func _read_frontmatter(fpath: String) -> Dictionary:
