@@ -14,3 +14,7 @@ desktop.ini
 
 # IDE
 *.code-workspace
+
+# 导出产物（Release 时再生成）
+export/
+export_presets.cfg
