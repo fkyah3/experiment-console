@@ -30,6 +30,7 @@ var _batch_dir: String = ""
 var _batch_save_store: ExperimentStore
 var _batch_stats: Array[Dictionary] = []
 var _batch_prototype_messages: Array = []
+var _batch_start_ms: int = 0
 const BATCH_CONCURRENCY: int = 5
 
 @onready var params_model: OptionButton = %ParamsModel
@@ -51,6 +52,8 @@ const BATCH_CONCURRENCY: int = 5
 @onready var template_btn: MenuButton = %TemplateBtn
 @onready var settings_btn: Button = %SettingsBtn
 @onready var batch_btn: Button = %BatchBtn
+@onready var reader_btn: Button = %ReaderBtn
+@onready var batch_reader = %BatchReader
 
 @onready var log_request: TextEdit = %LogRequest
 @onready var log_response: TextEdit = %LogResponse
@@ -137,6 +140,8 @@ func _connect_signals() -> void:
 	view_req_btn.pressed.connect(_show_request_body)
 	settings_btn.pressed.connect(_open_settings)
 	batch_btn.pressed.connect(_on_batch_run)
+	reader_btn.pressed.connect(_toggle_reader)
+	batch_reader.back_requested.connect(_toggle_reader)
 	_populate_template_menu()
 
 
@@ -808,6 +813,7 @@ func _start_batch(count: int, batch_name: String) -> void:
 	_batch_running = 0
 	_batch_stats.clear()
 	_batch_prototype_messages = _messages.duplicate(true)
+	_batch_start_ms = Time.get_ticks_msec()
 
 	var now := Time.get_datetime_dict_from_system()
 	var dir_name := "batch_%04d%02d%02d_%02d%02d" % [now.year, now.month, now.day, now.hour, now.minute]
@@ -860,6 +866,7 @@ func _start_batch_worker() -> void:
 		"usage": {},
 		"ok": false,
 		"index": _batch_total - _batch_queue.size() - _batch_running,
+		"start_ms": Time.get_ticks_msec(),
 	}
 
 	_batch_running += 1
@@ -940,11 +947,17 @@ func _calc_worker_stats(wd: Dictionary) -> Dictionary:
 	var s: Dictionary = {}
 	s["index"] = wd.index
 	s["ok"] = true
+	var duration_ms: int = Time.get_ticks_msec() - int(wd.get("start_ms", 0))
+	s["duration_ms"] = duration_ms
+	s["duration_s"] = float(duration_ms) / 1000.0
 	if not wd.usage.is_empty():
 		s["reasoning_tokens"] = wd.usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
 		s["prompt_tokens"] = wd.usage.get("prompt_tokens", 0)
 		s["completion_tokens"] = wd.usage.get("completion_tokens", 0)
 		s["total_tokens"] = wd.usage.get("total_tokens", 0)
+		var total_tok: int = int(s["total_tokens"])
+		if duration_ms > 0:
+			s["tokens_per_sec"] = float(total_tok) / (float(duration_ms) / 1000.0)
 	s["reasoning_chars"] = wd.reasoning.length()
 	s["output_chars"] = wd.content.length()
 	s["reasoning_language"] = _detect_language_str(wd.reasoning)
@@ -1056,18 +1069,33 @@ func _generate_batch_summary() -> void:
 		lines.append("| reasoning 英文占比 | %d / %d (%.1f%%) |\n" % [en_count, _batch_stats.size(), float(en_count) / float(_batch_stats.size()) * 100.0])
 		lines.append("\n")
 
+		var total_duration_ms: int = Time.get_ticks_msec() - _batch_start_ms
+		var avg_duration_ms: float = float(total_duration_ms) / float(max(1, _batch_stats.size()))
+		var total_tok_sum: int = _sum(total_vals)
+
+		lines.append("## 耗时与速度\n\n")
+		lines.append("| 指标 | 值 |\n")
+		lines.append("|:-----|:----|\n")
+		lines.append("| 总用时 | %.1f 秒 |\n" % (float(total_duration_ms) / 1000.0))
+		lines.append("| 平均每轮 | %.1f 秒 |\n" % (avg_duration_ms / 1000.0))
+		lines.append("| 总 tokens | %d |\n" % total_tok_sum)
+		lines.append("| 平均 token 速度 | %.1f tok/s |\n" % (float(total_tok_sum) / (float(total_duration_ms) / 1000.0) if total_duration_ms > 0 else 0.0))
+		lines.append("\n")
+
 		lines.append("## 每轮明细\n\n")
-		lines.append("| # | reasoning_tokens | reasoning_lang | output_lang | reasoning_chars | output_chars | reasoning 前80字 |\n")
-		lines.append("|:-:|:---------------:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
+		lines.append("| # | reasoning_tokens | duration | tok/s | reasoning_lang | output_lang | reasoning_chars | output_chars | reply 前80字 |\n")
+		lines.append("|:-:|:---------------:|:--------:|:-----:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
 		for s in _batch_stats:
 			var idx: int = int(s.get("index", 0))
 			var rt: int = int(s.get("reasoning_tokens", 0))
+			var dm: int = int(s.get("duration_ms", 0))
+			var tps: float = float(s.get("tokens_per_sec", 0.0))
 			var rl: String = str(s.get("reasoning_language", "?"))
 			var ol: String = str(s.get("output_language", "?"))
 			var rc: int = int(s.get("reasoning_chars", 0))
 			var oc: int = int(s.get("output_chars", 0))
-			var first: String = str(s.get("reasoning_first_line", ""))
-			lines.append("| %d | %d | %s | %s | %d | %d | %s |\n" % [idx, rt, rl, ol, rc, oc, first])
+			var reply: String = str(s.get("output_first_line", ""))
+			lines.append("| %d | %d | %.1fs | %.1f | %s | %s | %d | %d | %s |\n" % [idx, rt, float(dm) / 1000.0, tps, rl, ol, rc, oc, reply])
 
 	lines.append("\n")
 	lines.append("---\n")
@@ -1118,6 +1146,19 @@ func _build_api_messages_for(raw: Array) -> Array:
 
 		result.append(msg)
 	return result
+
+
+func _toggle_reader() -> void:
+	var main_content := $VBox
+	if main_content == null or batch_reader == null:
+		return
+	var showing_reader: bool = batch_reader.visible
+	batch_reader.visible = not showing_reader
+	main_content.visible = showing_reader
+	reader_btn.text = "🔬 实验台" if batch_reader.visible else "📖 浏览报告"
+	if batch_reader.visible:
+		batch_reader.set_experiments_dir(_config.experiments_path)
+		batch_reader._refresh_batch_list()
 
 
 func _scroll_to_bottom() -> void:

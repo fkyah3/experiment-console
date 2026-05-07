@@ -1,0 +1,179 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://BatchReader.gd" id="1"]
+
+[node name="BatchReader" type="Control"]
+script = ExtResource("1")
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="TopBar" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 4
+offset_top = 4
+offset_right = -4
+offset_bottom = 32
+
+[node name="BackBtn" type="Button" parent="TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "← 回实验台"
+
+[node name="BatchSelect" type="OptionButton" parent="TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = ""
+
+[node name="RefreshBtn" type="Button" parent="TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "刷新"
+
+[node name="DirLabel" type="Label" parent="TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = ""
+
+[node name="Split" type="HSplitContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4
+offset_top = 36
+offset_right = -4
+offset_bottom = -24
+split_offset = 220
+
+[node name="LeftPanel" type="ScrollContainer" parent="Split"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LeftVBox" type="VBoxContainer" parent="Split/LeftPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="ParamsLabel" type="Label" parent="Split/LeftPanel/LeftVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+autowrap_mode = 1
+text = ""
+
+[node name="HSep1" type="HSeparator" parent="Split/LeftPanel/LeftVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="StatsLabel" type="Label" parent="Split/LeftPanel/LeftVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+autowrap_mode = 1
+text = ""
+
+[node name="HSep2" type="HSeparator" parent="Split/LeftPanel/LeftVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="RoundListTitle" type="Label" parent="Split/LeftPanel/LeftVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "轮次"
+
+[node name="RoundList" type="ItemList" parent="Split/LeftPanel/LeftVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+allow_reselect = true
+
+[node name="RightPanel" type="VBoxContainer" parent="Split"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+
+[node name="RoundNav" type="HBoxContainer" parent="Split/RightPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="RoundTitle" type="Label" parent="Split/RightPanel/RoundNav"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = ""
+
+[node name="PrevBtn" type="Button" parent="Split/RightPanel/RoundNav"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "← 上一轮"
+
+[node name="NextBtn" type="Button" parent="Split/RightPanel/RoundNav"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "下一轮 →"
+
+[node name="PromptLabel" type="Label" parent="Split/RightPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "━ 提示词 ━"
+
+[node name="PromptView" type="TextEdit" parent="Split/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+custom_minimum_size.y = 80
+editable = false
+wrap_mode = 1
+theme_override_colors/background_color = Color(0.15, 0.15, 0.17, 1)
+
+[node name="ReasoningLabel" type="Label" parent="Split/RightPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "━ 思考过程 ━"
+
+[node name="ReasoningView" type="TextEdit" parent="Split/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+editable = false
+wrap_mode = 1
+theme_override_colors/background_color = Color(0.17, 0.15, 0.13, 1)
+
+[node name="ContentLabel" type="Label" parent="Split/RightPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "━ 回答 ━"
+
+[node name="ContentView" type="TextEdit" parent="Split/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+editable = false
+wrap_mode = 1
+theme_override_colors/background_color = Color(0.13, 0.15, 0.17, 1)
+
+[node name="DebugLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 0
+anchor_left = 0.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4
+offset_top = -20
+offset_right = -4
+offset_bottom = 0
+autowrap_mode = 1
+theme_override_colors/font_color = Color(0.6, 0.6, 0.6, 1)
+text = ""
