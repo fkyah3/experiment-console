@@ -27,6 +27,7 @@ func set_experiments_dir(path: String) -> void:
 @onready var content_view: TextEdit = %ContentView
 @onready var round_title: Label = %RoundTitle
 @onready var debug_label: Label = %DebugLabel
+@onready var round_detail_label: Label = %RoundDetailLabel
 @onready var prev_btn: Button = %PrevBtn
 @onready var next_btn: Button = %NextBtn
 
@@ -49,7 +50,7 @@ func _refresh_batch_list() -> void:
 	var all_entries: Array[String] = []
 	var seen: Dictionary = {}
 
-	for base in [_experiments_dir, "res://实验报告/"]:
+	for base in [_experiments_dir]:
 		var dir := DirAccess.open(base)
 		if dir == null:
 			continue
@@ -99,6 +100,8 @@ func _load_summary() -> void:
 		prompt_view.text = ""
 		reasoning_view.text = ""
 		content_view.text = ""
+		round_detail_label.text = ""
+		round_title.text = "选择一轮查看"
 		round_list.clear()
 		return
 
@@ -108,30 +111,41 @@ func _load_summary() -> void:
 
 	var in_detail_table := false
 	var in_stats_table := false
+	var in_time_table := false
 	var header_skipped := false
 
 	for line in lines:
 		if line.begins_with("- **") and line.contains("**:"):
 			var key_end := line.find("**:")
-			var key := line.substr(3, key_end - 3)
+			var key := line.substr(4, key_end - 4)
 			var val := line.substr(key_end + 3).strip_edges()
 			_summary_data[key] = val
 
 		if line.begins_with("## 汇总统计"):
 			in_stats_table = true
 			in_detail_table = false
+			in_time_table = false
 			header_skipped = false
 			continue
 
 		if line.begins_with("## 每轮明细"):
 			in_detail_table = true
 			in_stats_table = false
+			in_time_table = false
+			header_skipped = false
+			continue
+
+		if line.begins_with("## 耗时与速度"):
+			in_time_table = true
+			in_stats_table = false
+			in_detail_table = false
 			header_skipped = false
 			continue
 
 		if line.begins_with("## "):
 			in_detail_table = false
 			in_stats_table = false
+			in_time_table = false
 			continue
 
 		if in_stats_table and line.begins_with("|"):
@@ -142,28 +156,42 @@ func _load_summary() -> void:
 			if cells.size() >= 2:
 				_summary_data[cells[0]] = cells[1]
 
-		if in_detail_table and line.begins_with("|"):
+		if in_time_table and line.begins_with("|"):
 			if not header_skipped:
 				header_skipped = true
 				continue
 			var cells := _parse_cells(line)
-			if cells.size() >= 7:
-				var row: Dictionary = {}
-				row["index"] = cells[0]
-				row["reasoning_tokens"] = cells[1]
-				if cells.size() >= 9:
-					row["reasoning_lang"] = cells[4]
-					row["output_lang"] = cells[5]
-					row["reasoning_chars"] = cells[6]
-					row["output_chars"] = cells[7]
-					row["first_line"] = cells[8]
-				else:
-					row["reasoning_lang"] = cells[2]
-					row["output_lang"] = cells[3]
-					row["reasoning_chars"] = cells[4]
-					row["output_chars"] = cells[5]
-					row["first_line"] = cells[6] if cells.size() > 6 else ""
-				_summary_rows.append(row)
+			if cells.size() >= 2:
+				_summary_data[cells[0]] = cells[1]
+
+		if in_detail_table and line.begins_with("|"):
+			if line.contains(":-:"):
+				header_skipped = true
+				continue
+			if not header_skipped:
+				header_skipped = true
+				continue
+			var cells := _parse_cells(line)
+			if cells.size() < 7:
+				continue
+			var row: Dictionary = {}
+			row["index"] = cells[0]
+			row["reasoning_tokens"] = cells[1]
+			if cells[2].contains("s"):
+				row["duration"] = cells[2]
+				row["tokens_per_sec"] = cells[3]
+				row["reasoning_lang"] = cells[4]
+				row["output_lang"] = cells[5]
+				row["reasoning_chars"] = cells[6]
+				row["output_chars"] = cells[7]
+				row["first_line"] = cells[8] if cells.size() > 8 else ""
+			else:
+				row["reasoning_lang"] = cells[2]
+				row["output_lang"] = cells[3]
+				row["reasoning_chars"] = cells[4]
+				row["output_chars"] = cells[5]
+				row["first_line"] = cells[6] if cells.size() > 6 else ""
+			_summary_rows.append(row)
 
 	_update_display()
 
@@ -186,17 +214,45 @@ func _update_display() -> void:
 		if not v.is_empty():
 			params_label.text += "%s: %s\n" % [key, v]
 	params_label.text += "总计: %s  成功: %s  失败: %s" % [d.get("总次数", "?"), d.get("成功", "?"), d.get("失败", "?")]
+	_update_stats_view()
+	_populate_round_list()
 
+
+func _update_stats_view() -> void:
+	var d := _summary_data
 	stats_label.text = ""
-	for key in ["reasoning_tokens 最小值", "reasoning_tokens 最大值", "reasoning_tokens 平均值", "reasoning_tokens 中位数"]:
+	var labels := {
+		"reasoning_tokens 最小值": "rt最小值",
+		"reasoning_tokens 最大值": "rt最大值",
+		"reasoning_tokens 平均值": "rt平均值",
+		"reasoning_tokens 中位数": "rt中位数",
+		"波动倍数（max/min）": "波动倍数",
+		"prompt_tokens 平均值": "prompt_avg",
+		"completion_tokens 平均值": "completion_avg",
+		"total_tokens 平均值": "total_avg",
+	}
+	for key in labels:
 		var v: String = d.get(key, "")
 		if not v.is_empty():
-			stats_label.text += "%s\n" % v
+			stats_label.text += "%s: %s\n" % [labels[key], v]
 	var zh: String = d.get("reasoning 中文占比", "")
+	var en: String = d.get("reasoning 英文占比", "")
 	if not zh.is_empty():
-		stats_label.text += "中文: %s" % zh
+		stats_label.text += "中文占比: %s\n" % zh
+	if not en.is_empty():
+		stats_label.text += "英文占比: %s" % en
 
-	_populate_round_list()
+	var hs: String = ""
+	var time_keys := ["总用时", "平均每轮", "总 tokens", "平均 token 速度"]
+	for k in time_keys:
+		var v: String = d.get(k, "")
+		if not v.is_empty():
+			hs += "%s: %s  " % [k, v]
+	if not hs.is_empty():
+		stats_label.text += "\n\n耗时速度:\n" + hs
+	debug_label.text = "总指标数: %d | 有时间数据: %s" % [_summary_data.size(), "否" if hs.is_empty() else "是"]
+	if not hs.is_empty():
+		debug_label.text += " | 首: " + hs.left(60)
 
 
 func _populate_round_list() -> void:
@@ -254,7 +310,14 @@ func _select_round(idx: int) -> void:
 	_update_nav_buttons()
 	var row := _summary_rows[idx]
 	var round_idx_str: String = row.get("index", "1")
-	round_title.text = "第 %s 轮（%d / %d）" % [round_idx_str, idx + 1, _summary_rows.size()]
+	var dur: String = str(row.get("duration", ""))
+	var tps: String = str(row.get("tokens_per_sec", ""))
+	var suffix: String = ""
+	if not dur.is_empty():
+		suffix += " | %s" % dur
+	if not tps.is_empty():
+		suffix += " | %s tok/s" % tps
+	round_title.text = "第 %s 轮（%d / %d）%s" % [round_idx_str, idx + 1, _summary_rows.size(), suffix]
 	_load_round_file(idx)
 
 
@@ -268,6 +331,7 @@ func _load_round_file(idx: int) -> void:
 		reasoning_view.text = ""
 		content_view.text = ""
 		debug_label.text += " | 无文件#%d" % idx
+		round_detail_label.text = ""
 		return
 	var fpath := _round_files[idx]
 	var content := FileAccess.get_file_as_string(fpath)
@@ -275,6 +339,7 @@ func _load_round_file(idx: int) -> void:
 		debug_label.text = "文件为空: " + fpath.get_file()
 		reasoning_view.text = ""
 		content_view.text = ""
+		round_detail_label.text = ""
 		return
 
 	var raw_msgs: Array = _extract_json_section(content, "messages（原始积木，reasoning 与 content 分离）")
@@ -319,6 +384,54 @@ func _load_round_file(idx: int) -> void:
 
 	reasoning_view.text = reasoning_content
 	content_view.text = content_text
+
+	_update_round_detail(content)
+
+
+func _update_round_detail(content: String) -> void:
+	var detail: String = ""
+
+	var lines := content.split("\n")
+	var in_header := false
+	var created_at: String = ""
+	for line in lines:
+		if line.strip_edges() == "---":
+			in_header = not in_header
+			continue
+		if in_header and line.begins_with("created_at:"):
+			created_at = line.substr("created_at:".length()).strip_edges().replace("\"", "")
+			break
+	if not created_at.is_empty():
+		detail += "时间: %s" % created_at
+
+	if _selected_idx >= 0 and _selected_idx < _summary_rows.size():
+		var row := _summary_rows[_selected_idx]
+		debug_label.text = "row键: %s | dur=%s tps=%s" % [str(row.keys()), str(row.get("duration", "?")), str(row.get("tokens_per_sec", "?"))]
+		var dur: String = str(row.get("duration", ""))
+		if not dur.is_empty():
+			if not detail.is_empty():
+				detail += "\n"
+			detail += "用时: %s" % dur
+		var tps: String = row.get("tokens_per_sec", "")
+		if not tps.is_empty():
+			detail += " | tok/s: %s" % tps
+
+	var stats_json = _extract_json_section(content, "stats")
+	if stats_json.size() > 0:
+		var s: Dictionary = stats_json[0] if stats_json[0] is Dictionary else {}
+		var keys := ["prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens", "output_chars", "reasoning_chars"]
+		var labels := ["prompt", "completion", "total", "rt", "输出字符", "思考字符"]
+		var vals: Array[String] = []
+		for i in keys.size():
+			if s.has(keys[i]):
+				vals.append("%s: %s" % [labels[i], str(s[keys[i]])])
+		if not vals.is_empty():
+			if not detail.is_empty():
+				detail += "\n"
+			for v in vals:
+				detail += v + "\n"
+
+	round_detail_label.text = detail
 
 
 func _extract_json_section(content: String, section_name: String) -> Array:

@@ -17,19 +17,19 @@ var is_stream_connected: bool:
 var _client: HTTPClient
 var _buffer: String = ""
 var _should_run: bool = false
-var _pending_messages: Array = []
 var _request_sent: bool = false
+var _body_str: String = ""
 
 
 func _ready() -> void:
 	_client = HTTPClient.new()
 
 
-func start_streaming(messages: Array) -> void:
+func start_streaming(body_str: String) -> void:
 	if _should_run:
 		return
 	_should_run = true
-	_pending_messages = messages.duplicate(true)
+	_body_str = body_str
 	_request_sent = false
 	_buffer = ""
 
@@ -62,11 +62,7 @@ func _process(_delta: float) -> void:
 				return
 			_request_sent = true
 
-			var post_body := JSON.stringify({
-				"model": "deepseek-v4-pro",
-				"messages": _pending_messages,
-				"stream": true
-			})
+			var post_body := _body_str
 
 			var headers := PackedStringArray([
 				"Content-Type: application/json",

@@ -3,12 +3,17 @@ class_name ExperimentPanel
 
 signal experiment_saved(path: String)
 
+const APIBuilder = preload("res://scripts/APIBuilder.gd")
+const ExperimentModelScript = preload("res://scripts/ExperimentModel.gd")
+const BatchRunnerScript = preload("res://scripts/BatchRunner.gd")
+
 var api_key: String = ""
 
 var _config: ConfigManager
 var _store: ExperimentStore
+var _model_data
+var _batch_runner
 var _deepseek: DeepSeekStreamClient
-var _messages: Array = []
 var _message_widgets: Array = []
 var _accumulated_content: String = ""
 var _accumulated_reasoning: String = ""
@@ -20,24 +25,16 @@ var _thinking: String = "enabled"
 var _effort: String = "high"
 var _max_tokens: int = 4096
 var _temperature: float = 0.0
-
-var _batch_queue: Array = []
-var _batch_running: int = 0
-var _batch_done: int = 0
-var _batch_failed: int = 0
-var _batch_total: int = 0
-var _batch_dir: String = ""
-var _batch_save_store: ExperimentStore
-var _batch_stats: Array[Dictionary] = []
-var _batch_prototype_messages: Array = []
-var _batch_start_ms: int = 0
-const BATCH_CONCURRENCY: int = 5
+var _top_p: float = 1.0
+var _frequency_penalty: float = 0.0
 
 @onready var params_model: OptionButton = %ParamsModel
 @onready var params_thinking: OptionButton = %ParamsThinking
 @onready var params_effort: OptionButton = %ParamsEffort
 @onready var params_max_tokens: SpinBox = %ParamsMaxTokens
 @onready var params_temperature: SpinBox = %ParamsTemperature
+@onready var params_top_p: SpinBox = %ParamsTopP
+@onready var params_freq_penalty: SpinBox = %ParamsFreqPenalty
 @onready var params_title: LineEdit = %ParamsTitle
 
 @onready var msg_list: VBoxContainer = %MsgList
@@ -69,6 +66,12 @@ func _ready() -> void:
 	_config = ConfigManager.new()
 	api_key = _config.api_key
 	_store = ExperimentStore.new(_config.experiments_path, _config.templates_path)
+	_model_data = ExperimentModelScript.new()
+	_batch_runner = BatchRunnerScript.new()
+	_batch_runner.setup(self, api_key, _config.templates_path)
+	_batch_runner.progress_updated.connect(_on_batch_progress)
+	_batch_runner.all_done.connect(_on_batch_finished)
+	_model_data.messages_changed.connect(_rebuild_list)
 	_build_dynamic()
 
 
@@ -79,8 +82,8 @@ func _build_dynamic() -> void:
 	params_model.select(0)
 	params_model.item_selected.connect(func(idx: int): _model = params_model.get_item_text(idx))
 
-	params_thinking.add_item("enabled")
-	params_thinking.add_item("disabled")
+	params_thinking.add_item("官方预设")
+	params_thinking.add_item("自定义")
 	params_thinking.select(0)
 	params_thinking.item_selected.connect(func(idx: int): _thinking = params_thinking.get_item_text(idx))
 
@@ -102,6 +105,18 @@ func _build_dynamic() -> void:
 	params_temperature.value = _temperature
 	params_temperature.value_changed.connect(func(v: float): _temperature = v)
 
+	params_top_p.min_value = 0.0
+	params_top_p.max_value = 1.0
+	params_top_p.step = 0.05
+	params_top_p.value = _top_p
+	params_top_p.value_changed.connect(func(v: float): _top_p = v)
+
+	params_freq_penalty.min_value = -2.0
+	params_freq_penalty.max_value = 2.0
+	params_freq_penalty.step = 0.1
+	params_freq_penalty.value = _frequency_penalty
+	params_freq_penalty.value_changed.connect(func(v: float): _frequency_penalty = v)
+
 	_params_add()
 	_populate_add_btn()
 	_connect_signals()
@@ -114,7 +129,7 @@ func _params_add() -> void:
 	var hbox: HBoxContainer = get_node_or_null("VBox/ParamsPanel/ParamsHBox")
 	if hbox == null:
 		return
-	var labels := ["模型", "思考模式", "推理强度", "max_tokens", "温度", "实验标题"]
+	var labels := ["模型", "参数模式", "推理强度", "max_tokens", "温度", "top_p", "freq_penalty", "实验标题"]
 	for i in labels.size():
 		var lbl := Label.new()
 		lbl.text = labels[i]
@@ -177,10 +192,7 @@ func _on_template_selected(id: int) -> void:
 	var t := _store.load_template(item_text)
 	if t.is_empty():
 		return
-	var template_msgs: Array = t.get("messages", [])
-	for m in template_msgs:
-		_messages.append(m.duplicate(true))
-	_rebuild_list()
+	_model_data.insert_template(t.get("messages", []))
 	_set_status("已插入模板: " + item_text)
 
 
@@ -198,7 +210,7 @@ func _save_current_as_template() -> void:
 		var tname := name_input.text.strip_edges()
 		if tname.is_empty():
 			return
-		_store.save_template(tname, _model, _thinking, _effort, _max_tokens, _messages)
+		_store.save_template(tname, _model, _thinking, _effort, _max_tokens, _model_data.messages)
 		dialog.queue_free()
 		_populate_template_menu()
 		_set_status("已保存模板: " + tname)
@@ -264,26 +276,14 @@ func _on_tab_toggled(on: bool, tab: String) -> void:
 		req_tab.button_pressed = false
 
 
-func _add_block_with_role(role: String, subtype: String = "content") -> void:
-	var block := {"role": role, "content": "", "reasoning": "", "tool_calls": []}
-	if subtype == "reasoning":
-		block["reasoning"] = "在此输入思考过程..."
-	elif role == "tool":
-		block["tool_call_id"] = ""
-		block["name"] = ""
-	_messages.append(block)
-	_rebuild_list()
-	_scroll_to_bottom()
-
-
 func _on_add_block(id: int) -> void:
 	match id:
-		0: _add_block_with_role("system")
-		1: _add_block_with_role("user")
-		2: _add_block_with_role("assistant", "content")
-		3: _add_block_with_role("assistant", "reasoning")
-		4: _add_block_with_role("assistant")
-		5: _add_block_with_role("tool")
+		0: _model_data.add("system")
+		1: _model_data.add("user")
+		2: _model_data.add("assistant", "content")
+		3: _model_data.add("assistant", "reasoning")
+		4: _model_data.add("assistant")
+		5: _model_data.add("tool")
 
 
 func _rebuild_list() -> void:
@@ -292,12 +292,11 @@ func _rebuild_list() -> void:
 		child.queue_free()
 	_message_widgets.clear()
 
-	for i in _messages.size():
-		var w := _build_block_widget(i, _messages[i])
+	for i in _model_data.messages.size():
+		var w := _build_block_widget(i, _model_data.messages[i])
 		_message_widgets.append(w)
 		msg_list.add_child(w.container)
-
-	msg_count.text = str(_messages.size()) + " 条"
+	msg_count.text = str(_model_data.messages.size()) + " 条"
 
 
 func _build_block_widget(idx: int, data: Dictionary) -> Dictionary:
@@ -404,9 +403,9 @@ func _build_block_widget(idx: int, data: Dictionary) -> Dictionary:
 	)
 
 	edit_btn.pressed.connect(func(): _edit_block(idx))
-	up_btn.pressed.connect(func(): _move_block(idx, -1))
-	down_btn.pressed.connect(func(): _move_block(idx, 1))
-	del_btn.pressed.connect(func(): _remove_block(idx))
+	up_btn.pressed.connect(func(): _model_data.move(idx, -1))
+	down_btn.pressed.connect(func(): _model_data.move(idx, 1))
+	del_btn.pressed.connect(func(): _model_data.remove_at(idx))
 
 	root.add_child(body)
 	return {"container": root, "header": header, "body": body, "index_label": index_label, "role_label": role_label, "preview_label": preview_label}
@@ -422,9 +421,9 @@ func _role_color(role: String) -> Color:
 
 
 func _edit_block(idx: int) -> void:
-	if idx < 0 or idx >= _messages.size():
+	if idx < 0 or idx >= _model_data.messages.size():
 		return
-	var data: Dictionary = _messages[idx]
+	var data: Dictionary = _model_data.messages[idx]
 	var dialog := AcceptDialog.new()
 	dialog.title = "编辑积木 #" + str(idx)
 	dialog.min_size = Vector2(500, 400)
@@ -470,65 +469,34 @@ func _edit_block(idx: int) -> void:
 	await dialog.tree_exited
 
 
-func _move_block(idx: int, dir: int) -> void:
-	var target := idx + dir
-	if target < 0 or target >= _messages.size():
-		return
-	var temp: Dictionary = _messages[idx]
-	_messages[idx] = _messages[target]
-	_messages[target] = temp
-	_rebuild_list()
-
-
-func _remove_block(idx: int) -> void:
-	if idx < 0 or idx >= _messages.size():
-		return
-	_messages.remove_at(idx)
-	_rebuild_list()
-
-
 func _on_clear() -> void:
-	_messages.clear()
+	_model_data.clear()
 	log_request.text = ""
 	log_response.text = ""
 	log_usage.text = ""
 	_last_response_body = ""
 	_last_usage = {}
-	_rebuild_list()
 	_set_status("已清空")
 
 
 func _on_send() -> void:
-	if _messages.is_empty():
+	if _model_data.messages.is_empty():
 		_set_status("消息列表为空，无法发送")
 		return
 
 	_set_status("发送中...")
 	send_btn.disabled = true
 
-	var msgs_to_send := _build_api_messages()
-	var body_dict := {
-		"model": _model,
-		"messages": msgs_to_send,
-		"stream": true,
-	}
-	if _thinking == "enabled":
-		body_dict["thinking"] = {"type": "enabled"}
-	if _effort != "不传":
-		body_dict["reasoning_effort"] = _effort
-	body_dict["max_tokens"] = _max_tokens
-	body_dict["temperature"] = _temperature
-
+	var msgs_to_send := APIBuilder.build_api_messages(_model_data.messages)
+	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, msgs_to_send, _top_p, _frequency_penalty)
 	var body_str := JSON.stringify(body_dict, "\t")
 	log_request.text = body_str
 
 	_accumulated_content = ""
 	_accumulated_reasoning = ""
 
-	var idx := _messages.size()
-	var new_msg := {"role": "assistant", "content": "", "reasoning": ""}
-	_messages.append(new_msg)
-	_rebuild_list()
+	var idx: int = _model_data.messages.size()
+	_model_data.add("assistant")
 	_set_status("等待回复...")
 
 	_deepseek = DeepSeekStreamClient.new()
@@ -539,45 +507,23 @@ func _on_send() -> void:
 	_deepseek.stream_finished.connect(_on_stream_finished.bind(body_str))
 	_deepseek.usage_received.connect(_on_usage_received)
 	_deepseek.connection_error.connect(_on_connection_error)
-	_deepseek.start_streaming(msgs_to_send)
-
-
-func _build_api_messages() -> Array:
-	var result: Array = []
-	for m in _messages:
-		var msg: Dictionary = {"role": m.get("role", "user")}
-		var content: String = m.get("content", "")
-		var reasoning: String = m.get("reasoning", "")
-
-		if msg["role"] == "assistant":
-			if not reasoning.is_empty():
-				if not content.is_empty():
-					msg["content"] = reasoning + "\n" + content
-				else:
-					msg["reasoning_content"] = reasoning
-					msg["content"] = null
-
-		if not content.is_empty() and not msg.has("content"):
-			msg["content"] = content
-
-		result.append(msg)
-	return result
+	_deepseek.start_streaming(body_str)
 
 
 func _on_content_chunk(text: String, msg_idx: int) -> void:
-	if msg_idx < 0 or msg_idx >= _messages.size():
+	if msg_idx < 0 or msg_idx >= _model_data.messages.size():
 		return
 	_accumulated_content += text
-	_messages[msg_idx]["content"] = _accumulated_content
+	_model_data.messages[msg_idx]["content"] = _accumulated_content
 	_update_block_preview(msg_idx)
 	_set_status("生成中... (" + str(_accumulated_content.length()) + " 字)")
 
 
 func _on_reasoning_chunk(text: String, msg_idx: int) -> void:
-	if msg_idx < 0 or msg_idx >= _messages.size():
+	if msg_idx < 0 or msg_idx >= _model_data.messages.size():
 		return
 	_accumulated_reasoning += text
-	_messages[msg_idx]["reasoning"] = _accumulated_reasoning
+	_model_data.messages[msg_idx]["reasoning"] = _accumulated_reasoning
 	_update_block_preview(msg_idx)
 	_set_status("思考中... (" + str(_accumulated_reasoning.length()) + " 字)")
 
@@ -586,21 +532,13 @@ func _on_stream_finished(_body_str: String) -> void:
 	_set_status("流式接收完成")
 	send_btn.disabled = false
 
-	if not _messages.is_empty():
-		_messages[_messages.size() - 1]["content"] = _accumulated_content
-		_messages[_messages.size() - 1]["reasoning"] = _accumulated_reasoning
+	if not _model_data.messages.is_empty():
+		var last: int = _model_data.messages.size() - 1
+		_model_data.messages[last]["content"] = _accumulated_content
+		_model_data.messages[last]["reasoning"] = _accumulated_reasoning
 		_rebuild_list()
 
-	_last_response_body = JSON.stringify({
-		"choices": [{
-			"index": 0,
-			"message": {
-				"role": "assistant",
-				"content": _accumulated_content,
-				"reasoning_content": _accumulated_reasoning
-			}
-		}]
-	}, "\t")
+	_last_response_body = APIBuilder.build_response_body(_accumulated_content, _accumulated_reasoning)
 	log_response.text = _last_response_body
 
 	if _deepseek:
@@ -630,7 +568,7 @@ func _on_connection_error(msg: String) -> void:
 func _update_block_preview(idx: int) -> void:
 	if idx < 0 or idx >= _message_widgets.size():
 		return
-	var data: Dictionary = _messages[idx]
+	var data: Dictionary = _model_data.messages[idx]
 	var preview: String = data.get("content", "")
 	if data.has("reasoning") and not data.get("reasoning", "").is_empty():
 		preview = "🧠[%d] %s" % [data["reasoning"].length(), data["reasoning"]]
@@ -640,16 +578,16 @@ func _update_block_preview(idx: int) -> void:
 
 func _on_save() -> void:
 	var title := params_title.text.strip_edges()
-	if title.is_empty() and _messages.size() > 0:
-		title = _messages[0].get("content", "")
+	if title.is_empty() and _model_data.messages.size() > 0:
+		title = _model_data.messages[0].get("content", "")
 		title = title.left(20).replace("\n", " ")
 	if title.is_empty():
 		title = "untitled"
 
-	var msgs_to_send := _build_api_messages()
+	var msgs_to_send := APIBuilder.build_api_messages(_model_data.messages)
 	var fpath := _store.save_experiment(
 		title, _model, _thinking, _effort, _max_tokens, _temperature,
-		msgs_to_send, _messages,
+		msgs_to_send, _model_data.messages,
 		log_request.text, _last_response_body,
 		_last_usage, notes_input.text
 	)
@@ -724,21 +662,6 @@ func _open_settings() -> void:
 	tpl_row.add_child(tpl_open)
 	vbox.add_child(tpl_row)
 
-	var ses_label := Label.new()
-	ses_label.text = "会话存储路径"
-	vbox.add_child(ses_label)
-	var ses_row := HBoxContainer.new()
-	ses_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var ses_input := LineEdit.new()
-	ses_input.text = _config.sessions_path
-	ses_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ses_row.add_child(ses_input)
-	var ses_open := Button.new()
-	ses_open.text = "打开文件夹"
-	ses_open.pressed.connect(func(): _config.open_in_explorer(_config.sessions_path))
-	ses_row.add_child(ses_open)
-	vbox.add_child(ses_row)
-
 	var save_btn_dialog := Button.new()
 	save_btn_dialog.text = "保存"
 	save_btn_dialog.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -746,7 +669,6 @@ func _open_settings() -> void:
 		_config.api_key = key_input.text
 		_config.experiments_path = exp_input.text
 		_config.templates_path = tpl_input.text
-		_config.sessions_path = ses_input.text
 		_config.save_config()
 		api_key = _config.api_key
 		_store = ExperimentStore.new(_config.experiments_path, _config.templates_path)
@@ -803,349 +725,27 @@ func _on_batch_run() -> void:
 
 
 func _start_batch(count: int, batch_name: String) -> void:
-	if _messages.is_empty():
+	if _model_data.messages.is_empty():
 		_set_status("消息列表为空，无法批量运行")
 		return
 
-	_batch_total = count
-	_batch_done = 0
-	_batch_failed = 0
-	_batch_running = 0
-	_batch_stats.clear()
-	_batch_prototype_messages = _messages.duplicate(true)
-	_batch_start_ms = Time.get_ticks_msec()
-
-	var now := Time.get_datetime_dict_from_system()
-	var dir_name := "batch_%04d%02d%02d_%02d%02d" % [now.year, now.month, now.day, now.hour, now.minute]
-	if not batch_name.is_empty():
-		dir_name += "_" + batch_name.left(20)
-	_batch_dir = _config.experiments_path.path_join(dir_name)
-	_batch_save_store = ExperimentStore.new(_batch_dir, _config.templates_path)
-
-	_batch_queue.clear()
-	var raw_copies: Array = _messages.duplicate(true)
-	for i in count:
-		_batch_queue.append(raw_copies.duplicate(true))
-
 	_set_status("批量 %d 次开始，5 个并发..." % count)
-	for i in min(BATCH_CONCURRENCY, count):
-		_start_batch_worker()
+	_batch_runner.start(
+		count, batch_name,
+		_model_data.messages,
+		_config.experiments_path,
+		_config.templates_path,
+		_model, _thinking, _effort, _max_tokens, _temperature,
+		_top_p, _frequency_penalty
+	)
 
 
-func _start_batch_worker() -> void:
-	if _batch_queue.is_empty():
-		return
-	var raw_messages: Array = _batch_queue.pop_front()
-	var api_messages := _build_api_messages_for(raw_messages)
-
-	var body_dict := {
-		"model": _model,
-		"messages": api_messages,
-		"stream": true,
-	}
-	if _thinking == "enabled":
-		body_dict["thinking"] = {"type": "enabled"}
-	if _effort != "不传":
-		body_dict["reasoning_effort"] = _effort
-	body_dict["max_tokens"] = _max_tokens
-	body_dict["temperature"] = _temperature
-	var body_str := JSON.stringify(body_dict, "\t")
-
-	var client := DeepSeekStreamClient.new()
-	add_child(client)
-	client.api_key = api_key
-
-	var wd: Dictionary = {
-		"client": client,
-		"raw_messages": raw_messages,
-		"api_messages": api_messages,
-		"body_str": body_str,
-		"content": "",
-		"reasoning": "",
-		"response_body": "",
-		"usage": {},
-		"ok": false,
-		"index": _batch_total - _batch_queue.size() - _batch_running,
-		"start_ms": Time.get_ticks_msec(),
-	}
-
-	_batch_running += 1
-	client.content_chunk.connect(_on_batch_content_chunk.bind(wd))
-	client.reasoning_chunk.connect(_on_batch_reasoning_chunk.bind(wd))
-	client.stream_finished.connect(_on_batch_worker_done.bind(wd))
-	client.usage_received.connect(_on_batch_usage.bind(wd))
-	client.connection_error.connect(_on_batch_worker_error.bind(wd))
-	client.start_streaming(api_messages)
-	_set_status("批量 %d/%d | 运行中 %d | 失败 %d" % [_batch_done + _batch_failed, _batch_total, _batch_running, _batch_failed])
+func _on_batch_progress(done: int, failed: int, total: int, running: int) -> void:
+	_set_status("批量 %d/%d | 运行中 %d | 失败 %d" % [done + failed, total, running, failed])
 
 
-func _on_batch_content_chunk(text: String, wd: Dictionary) -> void:
-	wd.content += text
-
-
-func _on_batch_reasoning_chunk(text: String, wd: Dictionary) -> void:
-	wd.reasoning += text
-
-
-func _on_batch_usage(usage: Dictionary, wd: Dictionary) -> void:
-	wd.usage = usage
-
-
-func _on_batch_worker_done(wd: Dictionary) -> void:
-	wd.response_body = JSON.stringify({
-		"choices": [{
-			"index": 0,
-			"message": {
-				"role": "assistant",
-				"content": wd.content,
-				"reasoning_content": wd.reasoning,
-			}
-		}]
-	}, "\t")
-	wd.ok = true
-	_finish_batch_worker(wd)
-
-
-func _on_batch_worker_error(msg: String, wd: Dictionary) -> void:
-	push_warning("Batch worker #%d error: %s" % [wd.index, msg])
-	wd.ok = false
-	_finish_batch_worker(wd)
-
-
-func _finish_batch_worker(wd: Dictionary) -> void:
-	if wd.client:
-		wd.client.queue_free()
-
-	_batch_running -= 1
-
-	if wd.ok:
-		var title := params_title.text.strip_edges()
-		if title.is_empty():
-			title = "batch_%03d" % wd.index
-		_batch_save_store.save_experiment(
-			title, _model, _thinking, _effort, _max_tokens, _temperature,
-			wd.api_messages, wd.raw_messages,
-			wd.body_str, wd.response_body, wd.usage, ""
-		)
-		_batch_stats.append(_calc_worker_stats(wd))
-		_batch_done += 1
-	else:
-		_batch_failed += 1
-
-	_set_status("批量 %d/%d | 运行中 %d | 失败 %d" % [_batch_done + _batch_failed, _batch_total, _batch_running, _batch_failed])
-
-	if _batch_done + _batch_failed >= _batch_total:
-		_generate_batch_summary()
-		_set_status("批量完成：成功 %d / %d，失败 %d" % [_batch_done, _batch_total, _batch_failed])
-		return
-
-	if not _batch_queue.is_empty():
-		_start_batch_worker()
-
-
-func _calc_worker_stats(wd: Dictionary) -> Dictionary:
-	var s: Dictionary = {}
-	s["index"] = wd.index
-	s["ok"] = true
-	var duration_ms: int = Time.get_ticks_msec() - int(wd.get("start_ms", 0))
-	s["duration_ms"] = duration_ms
-	s["duration_s"] = float(duration_ms) / 1000.0
-	if not wd.usage.is_empty():
-		s["reasoning_tokens"] = wd.usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
-		s["prompt_tokens"] = wd.usage.get("prompt_tokens", 0)
-		s["completion_tokens"] = wd.usage.get("completion_tokens", 0)
-		s["total_tokens"] = wd.usage.get("total_tokens", 0)
-		var total_tok: int = int(s["total_tokens"])
-		if duration_ms > 0:
-			s["tokens_per_sec"] = float(total_tok) / (float(duration_ms) / 1000.0)
-	s["reasoning_chars"] = wd.reasoning.length()
-	s["output_chars"] = wd.content.length()
-	s["reasoning_language"] = _detect_language_str(wd.reasoning)
-	s["output_language"] = _detect_language_str(wd.content)
-	s["reasoning_first_line"] = wd.reasoning.left(80).replace("\n", " ")
-	s["output_first_line"] = wd.content.left(80).replace("\n", " ")
-	return s
-
-
-func _detect_language_str(text: String) -> String:
-	if text.is_empty():
-		return "empty"
-	var chinese_count := 0
-	var total := 0
-	for c in text:
-		var unicode := c.unicode_at(0)
-		if unicode >= 0x4E00 and unicode <= 0x9FFF:
-			chinese_count += 1
-		if unicode >= 0x0020:
-			total += 1
-	if total == 0:
-		return "unknown"
-	var ratio := float(chinese_count) / float(total)
-	if ratio > 0.1:
-		return "zh"
-	return "en"
-
-
-func _generate_batch_summary() -> void:
-	var lines: Array[String] = []
-	lines.append("# 批量实验汇总\n")
-	lines.append("---\n")
-	lines.append("\n")
-	var now := Time.get_datetime_dict_from_system()
-	var created := "%04d-%02d-%02d %02d:%02d:%02d" % [now.year, now.month, now.day, now.hour, now.minute, now.second]
-	lines.append("- **生成时间**: %s\n" % created)
-	lines.append("- **模型**: %s\n" % _model)
-	lines.append("- **思考模式**: %s\n" % _thinking)
-	lines.append("- **推理强度**: %s\n" % _effort)
-	lines.append("- **max_tokens**: %d\n" % _max_tokens)
-	lines.append("- **温度**: %.1f\n" % _temperature)
-	lines.append("- **总次数**: %d\n" % _batch_total)
-	lines.append("- **成功**: %d\n" % _batch_done)
-	lines.append("- **失败**: %d\n" % _batch_failed)
-	lines.append("\n")
-
-	lines.append("## 本次使用的 prompt\n\n")
-	lines.append("```\n")
-	var has_prompt := false
-	for m in _batch_prototype_messages:
-		var role: String = str(m.get("role", ""))
-		var content: String = str(m.get("content", ""))
-		var reasoning: String = str(m.get("reasoning", ""))
-		if role == "system":
-			lines.append("[system]\n%s\n\n" % content)
-			has_prompt = true
-		elif role == "user":
-			lines.append("[user]\n%s\n\n" % content)
-			has_prompt = true
-		elif role == "assistant" and not content.is_empty():
-			lines.append("[assistant]\n%s\n\n" % content)
-		elif role == "assistant" and not reasoning.is_empty():
-			lines.append("[assistant reasoning]\n%s\n\n" % reasoning)
-		elif role == "tool":
-			lines.append("[tool]\n%s\n\n" % content)
-	if not has_prompt:
-		lines.append("（空）\n")
-	lines.append("```\n")
-	lines.append("\n")
-
-	if _batch_stats.is_empty():
-		lines.append("无成功数据。\n")
-	else:
-		var reasoning_vals: Array[int] = []
-		var prompt_vals: Array[int] = []
-		var completion_vals: Array[int] = []
-		var total_vals: Array[int] = []
-		var zh_count: int = 0
-		var en_count: int = 0
-		for s in _batch_stats:
-			var rt: int = int(s.get("reasoning_tokens", 0))
-			reasoning_vals.append(rt)
-			prompt_vals.append(int(s.get("prompt_tokens", 0)))
-			completion_vals.append(int(s.get("completion_tokens", 0)))
-			total_vals.append(int(s.get("total_tokens", 0)))
-			match s.get("reasoning_language", ""):
-				"zh": zh_count += 1
-				"en": en_count += 1
-
-		var r_min: int = reasoning_vals.min()
-		var r_max: int = reasoning_vals.max()
-		var r_sum: int = 0
-		for v in reasoning_vals: r_sum += v
-		var r_avg: float = float(r_sum) / float(reasoning_vals.size())
-		var r_median: float = _median(reasoning_vals)
-
-		lines.append("## 汇总统计\n\n")
-		lines.append("| 指标 | 值 |\n")
-		lines.append("|:-----|:----|\n")
-		lines.append("| reasoning_tokens 最小值 | %d |\n" % r_min)
-		lines.append("| reasoning_tokens 最大值 | %d |\n" % r_max)
-		lines.append("| reasoning_tokens 平均值 | %.1f |\n" % r_avg)
-		lines.append("| reasoning_tokens 中位数 | %.1f |\n" % r_median)
-		lines.append("| 波动倍数（max/min） | %.1f |\n" % (float(r_max) / float(max(1, r_min))))
-		lines.append("| prompt_tokens 平均值 | %.1f |\n" % (float(_sum(prompt_vals)) / float(prompt_vals.size())))
-		lines.append("| completion_tokens 平均值 | %.1f |\n" % (float(_sum(completion_vals)) / float(completion_vals.size())))
-		lines.append("| total_tokens 平均值 | %.1f |\n" % (float(_sum(total_vals)) / float(total_vals.size())))
-		lines.append("| reasoning 中文占比 | %d / %d (%.1f%%) |\n" % [zh_count, _batch_stats.size(), float(zh_count) / float(_batch_stats.size()) * 100.0])
-		lines.append("| reasoning 英文占比 | %d / %d (%.1f%%) |\n" % [en_count, _batch_stats.size(), float(en_count) / float(_batch_stats.size()) * 100.0])
-		lines.append("\n")
-
-		var total_duration_ms: int = Time.get_ticks_msec() - _batch_start_ms
-		var avg_duration_ms: float = float(total_duration_ms) / float(max(1, _batch_stats.size()))
-		var total_tok_sum: int = _sum(total_vals)
-
-		lines.append("## 耗时与速度\n\n")
-		lines.append("| 指标 | 值 |\n")
-		lines.append("|:-----|:----|\n")
-		lines.append("| 总用时 | %.1f 秒 |\n" % (float(total_duration_ms) / 1000.0))
-		lines.append("| 平均每轮 | %.1f 秒 |\n" % (avg_duration_ms / 1000.0))
-		lines.append("| 总 tokens | %d |\n" % total_tok_sum)
-		lines.append("| 平均 token 速度 | %.1f tok/s |\n" % (float(total_tok_sum) / (float(total_duration_ms) / 1000.0) if total_duration_ms > 0 else 0.0))
-		lines.append("\n")
-
-		lines.append("## 每轮明细\n\n")
-		lines.append("| # | reasoning_tokens | duration | tok/s | reasoning_lang | output_lang | reasoning_chars | output_chars | reply 前80字 |\n")
-		lines.append("|:-:|:---------------:|:--------:|:-----:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
-		for s in _batch_stats:
-			var idx: int = int(s.get("index", 0))
-			var rt: int = int(s.get("reasoning_tokens", 0))
-			var dm: int = int(s.get("duration_ms", 0))
-			var tps: float = float(s.get("tokens_per_sec", 0.0))
-			var rl: String = str(s.get("reasoning_language", "?"))
-			var ol: String = str(s.get("output_language", "?"))
-			var rc: int = int(s.get("reasoning_chars", 0))
-			var oc: int = int(s.get("output_chars", 0))
-			var reply: String = str(s.get("output_first_line", ""))
-			lines.append("| %d | %d | %.1fs | %.1f | %s | %s | %d | %d | %s |\n" % [idx, rt, float(dm) / 1000.0, tps, rl, ol, rc, oc, reply])
-
-	lines.append("\n")
-	lines.append("---\n")
-
-	var summary_path := _batch_dir.path_join("_summary.md")
-	var file := FileAccess.open(summary_path, FileAccess.WRITE)
-	if file:
-		for line in lines:
-			file.store_string(line)
-		file.close()
-
-
-func _sum(arr: Array[int]) -> int:
-	var total := 0
-	for v in arr:
-		total += v
-	return total
-
-
-func _median(arr: Array[int]) -> float:
-	if arr.is_empty():
-		return 0.0
-	var sorted := arr.duplicate()
-	sorted.sort()
-	var mid := int(sorted.size() * 0.5)
-	if sorted.size() % 2 == 0:
-		return (sorted[mid - 1] + sorted[mid]) / 2.0
-	return float(sorted[mid])
-
-
-func _build_api_messages_for(raw: Array) -> Array:
-	var result: Array = []
-	for m in raw:
-		var msg: Dictionary = {"role": m.get("role", "user")}
-		var content: String = m.get("content", "")
-		var reasoning: String = m.get("reasoning", "")
-
-		if msg["role"] == "assistant":
-			if not reasoning.is_empty():
-				if not content.is_empty():
-					msg["content"] = reasoning + "\n" + content
-				else:
-					msg["reasoning_content"] = reasoning
-					msg["content"] = null
-
-		if not content.is_empty() and not msg.has("content"):
-			msg["content"] = content
-
-		result.append(msg)
-	return result
+func _on_batch_finished(success: int, failed: int) -> void:
+	_set_status("批量完成：成功 %d / %d，失败 %d" % [success, success + failed, failed])
 
 
 func _toggle_reader() -> void:

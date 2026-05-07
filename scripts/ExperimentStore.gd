@@ -1,6 +1,8 @@
 class_name ExperimentStore
 extends RefCounted
 
+const APIBuilder = preload("res://scripts/APIBuilder.gd")
+
 var _experiments_dir: String = "user://experiments/"
 var _templates_dir: String = "user://templates/"
 
@@ -30,7 +32,7 @@ func save_experiment(
 	var ts := "%04d%02d%02d_%02d%02d" % [now.year, now.month, now.day, now.hour, now.minute]
 
 	var safe_title := _sanitize_filename(title)
-	safe_title = safe_title.left(20)
+	safe_title = safe_title.left(60)
 	if safe_title.is_empty():
 		safe_title = "untitled"
 
@@ -226,8 +228,8 @@ func _compute_stats(response_body: String, usage: Dictionary) -> Dictionary:
 	var content: String = message.get("content", "")
 
 	stats["has_reasoning"] = not reasoning_content.is_empty()
-	stats["reasoning_language"] = _detect_language(reasoning_content)
-	stats["output_language"] = _detect_language(content)
+	stats["reasoning_language"] = APIBuilder.detect_language(reasoning_content)
+	stats["output_language"] = APIBuilder.detect_language(content)
 
 	if not reasoning_content.is_empty():
 		var rlen := reasoning_content.length()
@@ -242,25 +244,6 @@ func _compute_stats(response_body: String, usage: Dictionary) -> Dictionary:
 			stats["output_first_line"] = content.left(80).replace("\n", " ")
 
 	return stats
-
-
-func _detect_language(text: String) -> String:
-	if text.is_empty():
-		return "empty"
-	var chinese_count := 0
-	var total := 0
-	for c in text:
-		var unicode := c.unicode_at(0)
-		if unicode >= 0x4E00 and unicode <= 0x9FFF:
-			chinese_count += 1
-		if unicode >= 0x0020:
-			total += 1
-	if total == 0:
-		return "unknown"
-	var ratio := float(chinese_count) / float(total)
-	if ratio > 0.1:
-		return "zh"
-	return "en"
 
 
 func _read_frontmatter(fpath: String) -> Dictionary:

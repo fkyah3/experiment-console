@@ -12,7 +12,7 @@ config_version=5
 
 config/name="ExperimentConsole"
 config/description="AI 消息积木实验台 - 直连 DeepSeek API"
-run/main_scene="res://ExperimentPanel.tscn"
+run/main_scene="res://scenes/ExperimentPanel.tscn"
 config/features=PackedStringArray("4.6")
 config/icon="res://icon.svg"
 
@@ -21,6 +21,10 @@ config/icon="res://icon.svg"
 window/size/viewport_width=1920
 window/size/viewport_height=1080
 window/size/mode=2
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")
 
 [rendering]
 

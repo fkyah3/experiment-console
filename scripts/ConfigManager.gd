@@ -23,7 +23,6 @@ func load_config() -> void:
 	api_key = cfg.get_value("api", "key", "")
 	experiments_path = cfg.get_value("paths", "experiments", "user://experiments/")
 	templates_path = cfg.get_value("paths", "templates", "user://templates/")
-	sessions_path = cfg.get_value("paths", "sessions", "user://sessions/")
 	_dirty = false
 
 
@@ -32,7 +31,6 @@ func save_config() -> void:
 	cfg.set_value("api", "key", api_key)
 	cfg.set_value("paths", "experiments", experiments_path)
 	cfg.set_value("paths", "templates", templates_path)
-	cfg.set_value("paths", "sessions", sessions_path)
 	cfg.save(config_path)
 	_dirty = false
 	_make_dirs()
@@ -47,4 +45,3 @@ func open_in_explorer(path: String) -> void:
 func _make_dirs() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(experiments_path))
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(templates_path))
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(sessions_path))

@@ -1,7 +1,7 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://dvl5v3e6hkau3"]
 
-[ext_resource type="Script" path="res://ExperimentPanel.gd" id="1"]
-[ext_resource type="PackedScene" path="res://BatchReader.tscn" id="2"]
+[ext_resource type="Script" uid="uid://cphq7k475hla7" path="res://scripts/ExperimentPanel.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/BatchReader.tscn" id="2"]
 
 [node name="ExperimentPanel" type="Control" unique_id=2077890034]
 layout_mode = 3
@@ -46,6 +46,14 @@ unique_name_in_owner = true
 layout_mode = 2
 
 [node name="ParamsTemperature" type="SpinBox" parent="VBox/ParamsPanel/ParamsHBox" unique_id=1670889509]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="ParamsTopP" type="SpinBox" parent="VBox/ParamsPanel/ParamsHBox" unique_id=2019240178]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="ParamsFreqPenalty" type="SpinBox" parent="VBox/ParamsPanel/ParamsHBox" unique_id=2019240179]
 unique_name_in_owner = true
 layout_mode = 2
 
@@ -138,12 +146,12 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "⚙ 设置"
 
-[node name="BatchBtn" type="Button" parent="VBox/ActionBar"]
+[node name="BatchBtn" type="Button" parent="VBox/ActionBar" unique_id=260144149]
 unique_name_in_owner = true
 layout_mode = 2
 text = "🧪 批量"
 
-[node name="ReaderBtn" type="Button" parent="VBox/ActionBar"]
+[node name="ReaderBtn" type="Button" parent="VBox/ActionBar" unique_id=713257601]
 unique_name_in_owner = true
 layout_mode = 2
 text = "📖 浏览报告"
@@ -223,6 +231,9 @@ size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.5, 0.5, 0.5, 1)
 text = "就绪"
 
-[node name="BatchReader" parent="." instance=ExtResource("2")]
+[node name="BatchReader" parent="." unique_id=817226055 instance=ExtResource("2")]
 unique_name_in_owner = true
 visible = false
+layout_mode = 1
+grow_horizontal = 2
+grow_vertical = 2
