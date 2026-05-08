@@ -9,6 +9,12 @@ static func build_api_messages(messages: Array) -> Array:
 		var content: String = m.get("content", "")
 		var reasoning: String = m.get("reasoning", "")
 
+		if msg["role"] == "tool":
+			msg["role"] = "user"
+			msg["content"] = "[工具返回]\n" + content
+			result.append(msg)
+			continue
+
 		if msg["role"] == "assistant":
 			if not reasoning.is_empty():
 				if not content.is_empty():

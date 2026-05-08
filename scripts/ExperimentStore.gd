@@ -150,7 +150,24 @@ func save_template(name: String, model: String, thinking: String, effort: String
 
 
 func list_templates() -> Array[Dictionary]:
-	var dir := DirAccess.open(_templates_dir)
+	var result: Array[Dictionary] = _scan_template_dir(_templates_dir)
+	var res_result := _scan_template_dir("res://templates/")
+	for r in res_result:
+		var seen := false
+		for existing in result:
+			if existing.get("name", "") == r.get("name", ""):
+				seen = true
+				break
+		if not seen:
+			result.append(r)
+	result.sort_custom(func(a: Dictionary, b: Dictionary) -> int:
+		return a.get("name", "").naturalcasecmp_to(b.get("name", ""))
+	)
+	return result
+
+
+func _scan_template_dir(dir_path: String) -> Array[Dictionary]:
+	var dir := DirAccess.open(dir_path)
 	if dir == null:
 		return []
 	var result: Array[Dictionary] = []
@@ -158,7 +175,7 @@ func list_templates() -> Array[Dictionary]:
 	var fname := dir.get_next()
 	while not fname.is_empty():
 		if fname.ends_with(".json"):
-			var fpath := _templates_dir.path_join(fname)
+			var fpath := dir_path.path_join(fname)
 			var content := FileAccess.get_file_as_string(fpath)
 			if not content.is_empty():
 				var parsed = JSON.parse_string(content) as Dictionary
