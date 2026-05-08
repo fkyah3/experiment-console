@@ -622,7 +622,9 @@ func _on_tool_calls_done(tool_calls: Array) -> void:
 
 
 func _read_tool_file(filePath: String) -> String:
-	var base := "E:/agent/MountainShift/分析/opencode-yg/"
+	var base := _config.workspace_path
+	if not base.ends_with("/"):
+		base += "/"
 	var fpath := filePath
 	if not fpath.begins_with("E:/") and not fpath.begins_with("e:/") and not fpath.begins_with("C:/") and not fpath.begins_with("c:/"):
 		fpath = base.path_join(filePath)
@@ -741,7 +743,7 @@ func _show_request_body() -> void:
 func _open_settings() -> void:
 	var dialog := AcceptDialog.new()
 	dialog.title = "设置"
-	dialog.min_size = Vector2(500, 350)
+	dialog.min_size = Vector2(500, 420)
 
 	var vbox := VBoxContainer.new()
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -786,6 +788,14 @@ func _open_settings() -> void:
 	tpl_row.add_child(tpl_open)
 	vbox.add_child(tpl_row)
 
+	var ws_label := Label.new()
+	ws_label.text = "工作区路径（tool calling 的 read 工具根目录）"
+	vbox.add_child(ws_label)
+	var ws_input := LineEdit.new()
+	ws_input.text = _config.workspace_path
+	ws_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(ws_input)
+
 	var save_btn_dialog := Button.new()
 	save_btn_dialog.text = "保存"
 	save_btn_dialog.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -793,6 +803,7 @@ func _open_settings() -> void:
 		_config.api_key = key_input.text
 		_config.experiments_path = exp_input.text
 		_config.templates_path = tpl_input.text
+		_config.workspace_path = ws_input.text
 		_config.save_config()
 		api_key = _config.api_key
 		_store = ExperimentStore.new(_config.experiments_path, _config.templates_path)
