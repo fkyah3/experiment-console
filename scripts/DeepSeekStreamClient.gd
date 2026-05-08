@@ -92,7 +92,10 @@ func _process(_delta: float) -> void:
 		HTTPClient.STATUS_DISCONNECTED:
 			if _should_run:
 				_should_run = false
-				stream_finished.emit()
+				if _had_tool_calls:
+					tool_calls_done.emit(_tool_call_buf)
+				else:
+					stream_finished.emit()
 
 		HTTPClient.STATUS_CONNECTION_ERROR:
 			connection_error.emit("连接出错")
@@ -144,8 +147,8 @@ func _parse_event(line: String) -> void:
 
 	var delta = choices[0].get("delta", {})
 
-	var finish_reason: String = choices[0].get("finish_reason", "")
-	if finish_reason == "tool_calls":
+	var finish_reason = choices[0].get("finish_reason", "")
+	if finish_reason != null and str(finish_reason) == "tool_calls":
 		_had_tool_calls = true
 
 	if delta.has("reasoning_content") and delta["reasoning_content"] != null:
@@ -160,10 +163,12 @@ func _parse_event(line: String) -> void:
 				_tool_call_buf.append({"id": "", "name": "", "arguments": ""})
 			if tc.has("id"):
 				_tool_call_buf[idx]["id"] = tc["id"]
-			if tc.has("function") and tc["function"].has("name"):
-				_tool_call_buf[idx]["name"] = tc["function"]["name"]
-			if tc.has("function") and tc["function"].has("arguments"):
-				_tool_call_buf[idx]["arguments"] += tc["function"]["arguments"]
+			var func_data = tc.get("function")
+			if func_data != null:
+				if func_data.has("name"):
+					_tool_call_buf[idx]["name"] = func_data["name"]
+				if func_data.has("arguments"):
+					_tool_call_buf[idx]["arguments"] += func_data["arguments"]
 		tool_call_chunk.emit(delta["tool_calls"])
 
 
