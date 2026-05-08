@@ -559,6 +559,8 @@ func _on_usage_received(usage: Dictionary) -> void:
 
 func _on_connection_error(msg: String) -> void:
 	_set_status("连接错误: " + msg)
+	log_response.text = "[错误] " + msg
+	res_tab.button_pressed = true
 	send_btn.disabled = false
 	if _deepseek:
 		_deepseek.queue_free()
