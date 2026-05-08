@@ -28,7 +28,11 @@ func save_experiment(
 	usage: Dictionary,
 	notes: String
 ) -> String:
-	var now := Time.get_datetime_dict_from_system()
+	var utc := Time.get_datetime_dict_from_system()
+	var now: Dictionary = utc.duplicate()
+	now.hour = (utc.hour + 8) % 24
+	if utc.hour + 8 >= 24:
+		now.day += 1
 	var ts := "%04d%02d%02d_%02d%02d" % [now.year, now.month, now.day, now.hour, now.minute]
 	var safe_title := _sanitize_filename(title).left(60)
 	if safe_title.is_empty():
@@ -79,8 +83,12 @@ func _write(
 	usage: Dictionary,
 	notes: String
 ) -> bool:
-	var now := Time.get_datetime_dict_from_system()
-	var created := "%04d-%02d-%02dT%02d:%02d:%02d+08:00" % [now.year, now.month, now.day, now.hour, now.minute, now.second]
+	var utc := Time.get_datetime_dict_from_system()
+	var now: Dictionary = utc.duplicate()
+	now.hour = (utc.hour + 8) % 24
+	if utc.hour + 8 >= 24:
+		now.day += 1
+	var created := "%04d-%02d-%02dT%02d:%02d:%02d+08:00" % [now.year, now.month, now.day, now.hour, utc.minute, utc.second]
 
 	var file := FileAccess.open(fpath, FileAccess.WRITE)
 	if file == null:

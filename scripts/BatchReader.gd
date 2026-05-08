@@ -44,10 +44,11 @@ func _ready() -> void:
 
 func _refresh_batch_list() -> void:
 	batch_select.clear()
-	batch_select.add_item("— 选择批次目录 —")
+	batch_select.add_item("— 选择批次 / 单次实验 —")
 	batch_select.selected = 0
 
 	var all_entries: Array[String] = []
+	var all_singles: Array[String] = []
 	var seen: Dictionary = {}
 
 	for base in [_experiments_dir]:
@@ -63,27 +64,43 @@ func _refresh_batch_list() -> void:
 			if dir.current_is_dir() and not seen.has(fname):
 				all_entries.append(base.path_join(fname))
 				seen[fname] = true
+			elif fname.ends_with(".md") and not seen.has(fname):
+				all_singles.append(base.path_join(fname))
+				seen[fname] = true
 			fname = dir.get_next()
 		dir.list_dir_end()
 
 	all_entries.sort()
+	all_singles.sort()
 
-	if all_entries.is_empty():
-		dir_label.text = "未找到批次目录"
+	if all_entries.is_empty() and all_singles.is_empty():
+		dir_label.text = "未找到批次目录或实验文件"
 		return
 
 	dir_label.text = "找到 %d 个批次" % all_entries.size()
 	for entry_path in all_entries:
 		var short := entry_path.get_file()
-		batch_select.add_item(short)
+		batch_select.add_item("📁 " + short)
 		batch_select.set_item_metadata(batch_select.item_count - 1, entry_path)
+
+	if not all_singles.is_empty():
+		dir_label.text += " + %d 个单次实验" % all_singles.size()
+		batch_select.add_separator("── 单次实验 ──")
+		for entry_path in all_singles:
+			var short := entry_path.get_file()
+			batch_select.add_item("📄 " + short)
+			batch_select.set_item_metadata(batch_select.item_count - 1, entry_path)
 
 
 func _on_batch_selected(idx: int) -> void:
 	if idx <= 0:
 		return
-	_batch_dir = batch_select.get_item_metadata(idx)
-	var dir_name := batch_select.get_item_text(idx)
+	var path: String = batch_select.get_item_metadata(idx)
+	if path.ends_with(".md"):
+		_load_single_file(path)
+		return
+	_batch_dir = path
+	var dir_name := batch_select.get_item_text(idx).trim_prefix("📁 ")
 	dir_label.text = dir_name
 	debug_label.text = ""
 	_load_summary()
@@ -434,18 +451,101 @@ func _update_round_detail(content: String) -> void:
 	round_detail_label.text = detail
 
 
+func _load_single_file(fpath: String) -> void:
+	var short := fpath.get_file()
+	dir_label.text = "📄 " + short
+	debug_label.text = ""
+
+	_round_files.clear()
+	_round_files.append(fpath)
+	_summary_rows.clear()
+
+	var content := FileAccess.get_file_as_string(fpath)
+	if content.is_empty():
+		debug_label.text = "文件为空"
+		return
+
+	var stats_json = _extract_json_section(content, "stats")
+	var rt_str: String = "?"
+	var out_line: String = ""
+	if stats_json.size() > 0:
+		var s: Dictionary = stats_json[0] if stats_json[0] is Dictionary else {}
+		rt_str = str(s.get("reasoning_tokens", "?"))
+		out_line = str(s.get("output_first_line", ""))
+
+	var row: Dictionary = {
+		"index": "1",
+		"reasoning_tokens": rt_str,
+		"duration": "",
+		"tokens_per_sec": "",
+		"reasoning_lang": "?",
+		"output_lang": "?",
+		"reasoning_chars": "0",
+		"output_chars": "0",
+		"first_line": out_line
+	}
+	_summary_rows.append(row)
+
+	params_label.text = ""
+	var meta := _read_frontmatter_simple(content)
+	for key in ["model", "thinking", "effort", "max_tokens", "temperature"]:
+		var v: String = meta.get(key, "")
+		if not v.is_empty():
+			params_label.text += "%s: %s\n" % [key, v]
+	var created: String = meta.get("created_at", "")
+	if not created.is_empty():
+		params_label.text += "时间: %s" % created
+
+	stats_label.text = ""
+	if stats_json.size() > 0:
+		var s: Dictionary = stats_json[0] if stats_json[0] is Dictionary else {}
+		var keys := ["reasoning_tokens", "prompt_tokens", "completion_tokens", "total_tokens", "reasoning_chars", "output_chars"]
+		var labels := ["rt", "prompt", "completion", "total", "思考字符", "输出字符"]
+		for i in keys.size():
+			if s.has(keys[i]):
+				stats_label.text += "%s: %s\n" % [labels[i], str(s[keys[i]])]
+		if s.has("reasoning_language"):
+			stats_label.text += "思考语言: %s\n" % str(s.get("reasoning_language", "?"))
+		if s.has("output_language"):
+			stats_label.text += "输出语言: %s" % str(s.get("output_language", "?"))
+
+	_populate_round_list()
+	round_list.select(0)
+	_select_round(0)
+
+
+func _read_frontmatter_simple(content: String) -> Dictionary:
+	if not content.begins_with("---"):
+		return {}
+	var end_idx := content.find("---\n", 3)
+	if end_idx == -1:
+		end_idx = content.find("---\r\n", 3)
+	if end_idx == -1:
+		return {}
+	var meta: Dictionary = {}
+	var fm_str := content.substr(3, end_idx - 3).strip_edges()
+	for line in fm_str.split("\n"):
+		line = line.strip_edges()
+		if line.is_empty():
+			continue
+		var colon := line.find(":")
+		if colon != -1:
+			var key := line.substr(0, colon).strip_edges()
+			var val := line.substr(colon + 1).strip_edges().strip_escapes().trim_prefix('"').trim_suffix('"')
+			meta[key] = val
+	return meta
+
+
 func _extract_json_section(content: String, section_name: String) -> Array:
 	var marker := "## " + section_name
 	var start := content.find(marker)
 	if start == -1:
 		return []
 
-	# 兼容 Windows \r\n 和 Unix \n 换行
 	var json_start := content.find("```json", start)
 	if json_start == -1:
 		return []
-	
-	# 跳过 ```json 和后面的换行符（\r\n 或 \n）
+
 	json_start += len("```json")
 	while json_start < content.length() and (content[json_start] == '\r' or content[json_start] == '\n' or content[json_start] == ' '):
 		json_start += 1
