@@ -50,6 +50,12 @@ func _ready() -> void:
 func _build_fold_buttons() -> void:
 	if not prompt_view:
 		return
+	prompt_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	prompt_view.custom_minimum_size.y = 80
+	reasoning_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	reasoning_view.custom_minimum_size.y = 80
+	content_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_view.custom_minimum_size.y = 80
 	var rp := prompt_view.get_parent()
 	if rp:
 		var pl := rp.get_node_or_null("PromptLabel")
