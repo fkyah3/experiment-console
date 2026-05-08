@@ -10,12 +10,29 @@ static func build_api_messages(messages: Array) -> Array:
 		var reasoning: String = m.get("reasoning", "")
 
 		if msg["role"] == "tool":
-			msg["role"] = "user"
-			msg["content"] = "[工具返回]\n" + content
+			var tc_id: String = m.get("tool_call_id", "")
+			if not tc_id.is_empty():
+				msg["tool_call_id"] = tc_id
+				msg["content"] = content
+				if m.has("name"):
+					msg["name"] = m["name"]
+			else:
+				msg["role"] = "user"
+				msg["content"] = "[工具返回]\n" + content
 			result.append(msg)
 			continue
 
 		if msg["role"] == "assistant":
+			var tc_data: Array = m.get("tool_calls", [])
+			if not tc_data.is_empty():
+				msg["tool_calls"] = tc_data
+				if not content.is_empty():
+					msg["content"] = content
+				if not reasoning.is_empty():
+					msg["reasoning_content"] = reasoning
+				result.append(msg)
+				continue
+
 			var carry: bool = m.get("carry_reasoning", false)
 			if carry and not reasoning.is_empty():
 				msg["reasoning_content"] = reasoning
@@ -47,7 +64,8 @@ static func build_body_dict(
 	msg_list: Array,
 	top_p: float = 1.0,
 	frequency_penalty: float = 0.0,
-	stream: bool = true
+	stream: bool = true,
+	tools: Array = []
 ) -> Dictionary:
 	var body := {
 		"model": model,
@@ -64,7 +82,29 @@ static func build_body_dict(
 		body["frequency_penalty"] = frequency_penalty
 	body["max_tokens"] = max_tokens
 	body["temperature"] = temperature
+	if not tools.is_empty():
+		body["tools"] = tools
 	return body
+
+
+static func build_tools() -> Array:
+	return [{
+		"type": "function",
+		"function": {
+			"name": "read",
+			"description": "读取项目中的文件内容",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"filePath": {
+						"type": "string",
+						"description": "要读取的文件路径，相对于项目根目录"
+					}
+				},
+				"required": ["filePath"]
+			}
+		}
+	}]
 
 
 static func build_response_body(content: String, reasoning: String, indent: String = "\t") -> String:

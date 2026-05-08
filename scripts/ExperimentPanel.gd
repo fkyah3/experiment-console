@@ -19,6 +19,8 @@ var _accumulated_content: String = ""
 var _accumulated_reasoning: String = ""
 var _last_response_body: String = ""
 var _last_usage: Dictionary = {}
+var _tc_round: int = 0
+var _tc_max_rounds: int = 5
 
 var _model: String = "deepseek-v4-flash"
 var _thinking: String = "enabled"
@@ -493,9 +495,18 @@ func _on_send() -> void:
 
 	_set_status("发送中...")
 	send_btn.disabled = true
+	_tc_round = 0
+
+	_do_send()
+
+
+func _do_send() -> void:
+	var tools: Array = []
+	if _tc_round < _tc_max_rounds:
+		tools = APIBuilder.build_tools()
 
 	var msgs_to_send := APIBuilder.build_api_messages(_model_data.messages)
-	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, msgs_to_send, _top_p, _frequency_penalty)
+	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, msgs_to_send, _top_p, _frequency_penalty, true, tools)
 	var body_str := JSON.stringify(body_dict, "\t")
 	log_request.text = body_str
 
@@ -512,6 +523,7 @@ func _on_send() -> void:
 	_deepseek.content_chunk.connect(_on_content_chunk.bind(idx))
 	_deepseek.reasoning_chunk.connect(_on_reasoning_chunk.bind(idx))
 	_deepseek.stream_finished.connect(_on_stream_finished.bind(body_str))
+	_deepseek.tool_calls_done.connect(_on_tool_calls_done)
 	_deepseek.usage_received.connect(_on_usage_received)
 	_deepseek.connection_error.connect(_on_connection_error)
 	_deepseek.start_streaming(body_str)
@@ -553,6 +565,72 @@ func _on_stream_finished(_body_str: String) -> void:
 		_deepseek = null
 
 
+func _on_tool_calls_done(tool_calls: Array) -> void:
+	if _deepseek:
+		_deepseek.queue_free()
+		_deepseek = null
+
+	_tc_round += 1
+	if _tc_round >= _tc_max_rounds:
+		_set_status("工具调用已达上限 (%d)" % _tc_max_rounds)
+		send_btn.disabled = false
+		_rebuild_list()
+		return
+
+	if not _model_data.messages.is_empty():
+		var last: int = _model_data.messages.size() - 1
+		_model_data.messages[last]["content"] = _accumulated_content
+		_model_data.messages[last]["reasoning"] = _accumulated_reasoning
+
+		var tc_for_api: Array = []
+		for tc in tool_calls:
+			tc_for_api.append({
+				"id": tc.get("id", ""),
+				"type": "function",
+				"function": {
+					"name": tc.get("name", ""),
+					"arguments": tc.get("arguments", "")
+				}
+			})
+		_model_data.messages[last]["tool_calls"] = tc_for_api
+
+		for tc in tool_calls:
+			var func_name: String = tc.get("name", "")
+			var args_str: String = tc.get("arguments", "{}")
+			var call_id: String = tc.get("id", "")
+
+			var content := "[工具结果为空]"
+			if func_name == "read":
+				var args = JSON.parse_string(args_str) as Dictionary
+				var file_path: String = ""
+				if args != null:
+					file_path = args.get("filePath", "")
+				content = _read_tool_file(file_path)
+				_set_status("工具调用: read(%s) → %d chars" % [file_path, content.length()])
+
+			_model_data.append({
+			"role": "tool",
+			"tool_call_id": call_id,
+			"name": func_name,
+			 "content": content
+		})
+
+	_rebuild_list()
+	_accumulated_content = ""
+	_accumulated_reasoning = ""
+	_do_send()
+
+
+func _read_tool_file(filePath: String) -> String:
+	var base := "E:/agent/MountainShift/分析/opencode-yg/"
+	var fpath := filePath
+	if not fpath.begins_with("E:/") and not fpath.begins_with("e:/") and not fpath.begins_with("C:/") and not fpath.begins_with("c:/"):
+		fpath = base.path_join(filePath)
+	if FileAccess.file_exists(fpath):
+		return FileAccess.get_file_as_string(fpath)
+	return "[文件不存在: %s]" % filePath
+
+
 func _on_usage_received(usage: Dictionary) -> void:
 	_last_usage = usage
 	var rt: int = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
@@ -569,6 +647,7 @@ func _on_connection_error(msg: String) -> void:
 	log_response.text = "[错误] " + msg
 	res_tab.button_pressed = true
 	send_btn.disabled = false
+	_tc_round = _tc_max_rounds
 	if _deepseek:
 		_deepseek.queue_free()
 		_deepseek = null

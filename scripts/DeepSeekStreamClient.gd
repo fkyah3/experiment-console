@@ -4,6 +4,7 @@ extends Node
 signal reasoning_chunk(text: String)
 signal content_chunk(text: String)
 signal tool_call_chunk(data: Dictionary)
+signal tool_calls_done(tool_calls: Array)
 signal stream_finished()
 signal usage_received(usage: Dictionary)
 signal connection_error(msg: String)
@@ -19,6 +20,8 @@ var _buffer: String = ""
 var _should_run: bool = false
 var _request_sent: bool = false
 var _body_str: String = ""
+var _tool_call_buf: Array[Dictionary] = []
+var _had_tool_calls: bool = false
 
 
 func _ready() -> void:
@@ -32,6 +35,8 @@ func start_streaming(body_str: String) -> void:
 	_body_str = body_str
 	_request_sent = false
 	_buffer = ""
+	_tool_call_buf.clear()
+	_had_tool_calls = false
 
 	var err = _client.connect_to_host("api.deepseek.com", 443, TLSOptions.client())
 	if err != OK:
@@ -118,7 +123,10 @@ func _parse_event(line: String) -> void:
 	var data_str := line.substr(6).strip_edges()
 
 	if data_str == "[DONE]":
-		stream_finished.emit()
+		if _had_tool_calls:
+			tool_calls_done.emit(_tool_call_buf)
+		else:
+			stream_finished.emit()
 		stop()
 		return
 
@@ -135,11 +143,27 @@ func _parse_event(line: String) -> void:
 		return
 
 	var delta = choices[0].get("delta", {})
+
+	var finish_reason: String = choices[0].get("finish_reason", "")
+	if finish_reason == "tool_calls":
+		_had_tool_calls = true
+
 	if delta.has("reasoning_content") and delta["reasoning_content"] != null:
 		reasoning_chunk.emit(delta["reasoning_content"])
 	if delta.has("content") and delta["content"] != null:
 		content_chunk.emit(delta["content"])
 	if delta.has("tool_calls") and delta["tool_calls"] != null:
+		var tc_array: Array = delta["tool_calls"]
+		for tc in tc_array:
+			var idx: int = tc.get("index", 0)
+			while _tool_call_buf.size() <= idx:
+				_tool_call_buf.append({"id": "", "name": "", "arguments": ""})
+			if tc.has("id"):
+				_tool_call_buf[idx]["id"] = tc["id"]
+			if tc.has("function") and tc["function"].has("name"):
+				_tool_call_buf[idx]["name"] = tc["function"]["name"]
+			if tc.has("function") and tc["function"].has("arguments"):
+				_tool_call_buf[idx]["arguments"] += tc["function"]["arguments"]
 		tool_call_chunk.emit(delta["tool_calls"])
 
 
