@@ -31,8 +31,13 @@ func set_experiments_dir(path: String) -> void:
 @onready var prev_btn: Button = %PrevBtn
 @onready var next_btn: Button = %NextBtn
 
+var _prompt_fold_btn: Button
+var _reasoning_fold_btn: Button
+var _content_fold_btn: Button
+
 
 func _ready() -> void:
+	_build_fold_buttons()
 	refresh_btn.pressed.connect(_refresh_batch_list)
 	back_btn.pressed.connect(func(): back_requested.emit())
 	batch_select.item_selected.connect(_on_batch_selected)
@@ -40,6 +45,79 @@ func _ready() -> void:
 	prev_btn.pressed.connect(_on_prev)
 	next_btn.pressed.connect(_on_next)
 	_refresh_batch_list()
+
+
+func _build_fold_buttons() -> void:
+	if not prompt_view:
+		return
+	var rp := prompt_view.get_parent()
+	if rp:
+		var pl := rp.get_node_or_null("PromptLabel")
+		var rl := rp.get_node_or_null("ReasoningLabel")
+		var cl := rp.get_node_or_null("ContentLabel")
+		if pl: pl.visible = false
+		if rl: rl.visible = false
+		if cl: cl.visible = false
+	_prompt_fold_btn = _make_fold_header("▲ 提示词 (空)", prompt_view)
+	_reasoning_fold_btn = _make_fold_header("▲ 思考过程", reasoning_view)
+	_content_fold_btn = _make_fold_header("▲ 回答", content_view)
+	_prompt_fold_btn.pressed.connect(func(): _toggle_fold("prompt"))
+	_reasoning_fold_btn.pressed.connect(func(): _toggle_fold("reasoning"))
+	_content_fold_btn.pressed.connect(func(): _toggle_fold("content"))
+
+
+func _make_fold_header(title: String, te: TextEdit) -> Button:
+	var btn := Button.new()
+	btn.text = title
+	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	btn.flat = true
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var rp := te.get_parent()
+	if rp:
+		rp.add_child(btn)
+		rp.move_child(btn, te.get_index())
+	return btn
+
+
+func _toggle_fold(section: String) -> void:
+	var te: TextEdit
+	var btn: Button
+	var label: String
+	match section:
+		"prompt":
+			te = prompt_view
+			btn = _prompt_fold_btn
+			label = "提示词"
+		"reasoning":
+			te = reasoning_view
+			btn = _reasoning_fold_btn
+			label = "思考过程"
+		"content":
+			te = content_view
+			btn = _content_fold_btn
+			label = "回答"
+		_:
+			return
+	te.visible = not te.visible
+	var arrow := "▲" if te.visible else "▼"
+	var chars := te.text.length()
+	btn.text = "%s %s (%d 字)" % [arrow, label, chars]
+
+
+func _update_fold_texts() -> void:
+	_update_fold_btn(prompt_view, _prompt_fold_btn, "提示词")
+	_update_fold_btn(reasoning_view, _reasoning_fold_btn, "思考过程")
+	_update_fold_btn(content_view, _content_fold_btn, "回答")
+
+
+func _update_fold_btn(te: TextEdit, btn: Button, label: String) -> void:
+	var chars := te.text.length()
+	var preview := te.text.left(40).replace("\n", " ")
+	var arrow := "▲" if te.visible else "▼"
+	if chars > 0:
+		btn.text = "%s %s (%d 字) — %s" % [arrow, label, chars, preview]
+	else:
+		btn.text = "%s %s (空)" % [arrow, label]
 
 
 func _refresh_batch_list() -> void:
@@ -378,6 +456,7 @@ func _load_round_file(idx: int) -> void:
 			prompt_text += "[tool]\n" + msg_content + "\n\n"
 
 	prompt_view.text = prompt_text.strip_edges()
+	_update_fold_texts()
 
 	var reasoning_content: String = ""
 	var content_text: String = ""
