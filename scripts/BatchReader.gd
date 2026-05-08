@@ -188,28 +188,87 @@ func _on_batch_selected(idx: int) -> void:
 	dir_label.text = dir_name
 	debug_label.text = ""
 	_load_summary()
-	_load_round_files()
 
 
 func _load_summary() -> void:
 	var summary_path := _batch_dir.path_join("_summary.md")
 	var content := FileAccess.get_file_as_string(summary_path)
-	if content.is_empty():
-		debug_label.text = "未找到 _summary.md: " + summary_path
-		params_label.text = ""
-		stats_label.text = ""
-		prompt_view.text = ""
-		reasoning_view.text = ""
-		content_view.text = ""
-		round_detail_label.text = ""
-		round_title.text = "选择一轮查看"
-		round_list.clear()
+	if not content.is_empty():
+		_parse_summary_md(content)
+		_update_display()
+		_load_round_files()
 		return
 
-	var lines := content.split("\n")
+	_load_round_files()
+	if _round_files.is_empty():
+		debug_label.text = "目录为空"
+		_clear_right_panel()
+		return
+
+	_summary_data.clear()
+	_summary_rows.clear()
+	for i in _round_files.size():
+		var fpath: String = _round_files[i]
+		var fc := FileAccess.get_file_as_string(fpath)
+		var stats_json = _extract_json_section(fc, "stats")
+		var rt_str: String = "?"
+		var out_line: String = ""
+		var rl: String = "?"
+		var ol: String = "?"
+		if stats_json.size() > 0:
+			var s: Dictionary = stats_json[0] if stats_json[0] is Dictionary else {}
+			rt_str = str(s.get("reasoning_tokens", "?"))
+			out_line = str(s.get("output_first_line", ""))
+			rl = str(s.get("reasoning_language", "?"))
+			ol = str(s.get("output_language", "?"))
+		var fname := fpath.get_file()
+		var idx_str := fname.trim_prefix("round-").trim_suffix(".md")
+		var row: Dictionary = {
+			"index": idx_str,
+			"reasoning_tokens": rt_str,
+			"duration": "",
+			"tokens_per_sec": "",
+			"reasoning_lang": rl,
+			"output_lang": ol,
+			"reasoning_chars": "0",
+			"output_chars": "0",
+			"first_line": out_line
+		}
+		_summary_rows.append(row)
+
+	params_label.text = "多轮实验 — %d 轮\n" % _round_files.size()
+	var first_meta := _read_frontmatter_simple(FileAccess.get_file_as_string(_round_files[0]))
+	for key in ["model", "thinking", "effort", "max_tokens", "temperature"]:
+		var v: String = first_meta.get(key, "")
+		if not v.is_empty():
+			params_label.text += "%s: %s\n" % [key, v]
+	var created: String = first_meta.get("created_at", "")
+	if not created.is_empty():
+		params_label.text += "时间: %s" % created
+
+	stats_label.text = ""
+	_populate_round_list()
+	if not _summary_rows.is_empty():
+		round_list.select(0)
+		_select_round(0)
+
+
+func _clear_right_panel() -> void:
+	prompt_view.text = ""
+	reasoning_view.text = ""
+	content_view.text = ""
+	params_label.text = ""
+	stats_label.text = ""
+	round_detail_label.text = ""
+	round_title.text = "选择一轮查看"
+	round_list.clear()
+
+
+func _parse_summary_md(content: String) -> void:
 	_summary_data = {}
 	_summary_rows.clear()
 
+	var lines := content.split("\n")
 	var in_detail_table := false
 	var in_stats_table := false
 	var in_time_table := false
