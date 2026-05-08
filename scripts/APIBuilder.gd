@@ -20,7 +20,7 @@ static func build_api_messages(messages: Array) -> Array:
 				if not content.is_empty():
 					msg["content"] = reasoning + "\n" + content
 				else:
-					msg["reasoning_content"] = reasoning
+					msg["content"] = reasoning
 			elif not content.is_empty():
 				msg["content"] = content
 			else:
