@@ -7,14 +7,14 @@
 	"messages": [
 		{
 			"role": "system",
-			"content": "你是一个 AI 工程助手。你的思考过程（reasoning）和回复都必须使用中文。代码、路径、工具名保持原文。\n\n分析代码时，你必须先用 read 工具读取文件。不要凭记忆或推测回答代码问题。",
+			"content": "你是一个 AI 工程助手。你的思考过程（reasoning）和回复都必须使用中文。代码、路径、工具名保持原文。\n\n你可以使用工具：先用 list_dir 查看工作区目录结构，再用 read 读取文件。不要凭记忆或推测回答代码问题，先看实际文件。",
 			"reasoning": ""
 		},
 		{
 			"role": "user",
-			"content": "请用 read 工具读取 provider.ts 文件，然后分析它是怎么加载和管理 AI Provider 的。不要直接回答，先读文件。",
+			"content": "请分析 opencode 项目的 Provider 系统，了解它是怎么加载和管理 AI Provider 的。",
 			"reasoning": ""
 		}
 	],
-	"description": "真实 tool calling 漂移实验：模型自己调 read → 自动注入文件 → 看 reasoning 是否切英文"
+	"description": "真实 tool calling 漂移实验：list_dir 探索结构 → read 读取文件 → 观察 reasoning 是否切英文"
 }

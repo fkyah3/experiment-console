@@ -600,7 +600,14 @@ func _on_tool_calls_done(tool_calls: Array) -> void:
 			var call_id: String = tc.get("id", "")
 
 			var content := "[工具结果为空]"
-			if func_name == "read":
+			if func_name == "list_dir":
+				var args = JSON.parse_string(args_str) as Dictionary
+				var dir_path: String = "."
+				if args != null:
+					dir_path = args.get("dirPath", ".")
+				content = _list_dir(dir_path)
+				_set_status("工具调用: list_dir(%s) → %d chars" % [dir_path, content.length()])
+			elif func_name == "read":
 				var args = JSON.parse_string(args_str) as Dictionary
 				var file_path: String = ""
 				if args != null:
@@ -631,6 +638,30 @@ func _read_tool_file(filePath: String) -> String:
 	if FileAccess.file_exists(fpath):
 		return FileAccess.get_file_as_string(fpath)
 	return "[文件不存在: %s]" % filePath
+
+
+func _list_dir(dirPath: String) -> String:
+	var base := _config.workspace_path
+	if not base.ends_with("/"):
+		base += "/"
+	var dpath := dirPath
+	if not dpath.begins_with("E:/") and not dpath.begins_with("e:/") and not dpath.begins_with("C:/") and not dpath.begins_with("c:/"):
+		dpath = base.path_join(dirPath)
+	var dir := DirAccess.open(dpath)
+	if dir == null:
+		return "[目录不存在: %s]" % dirPath
+	var result: String = ""
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while not fname.is_empty():
+		if dir.current_is_dir():
+			result += "[DIR]  %s/" % fname
+		else:
+			result += "[FILE] %s" % fname
+		result += "\n"
+		fname = dir.get_next()
+	dir.list_dir_end()
+	return result
 
 
 func _on_usage_received(usage: Dictionary) -> void:

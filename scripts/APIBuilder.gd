@@ -91,14 +91,29 @@ static func build_tools() -> Array:
 	return [{
 		"type": "function",
 		"function": {
+			"name": "list_dir",
+			"description": "列出工作区目录中的文件和子目录。用于探索项目结构，找到需要读取的文件。",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"dirPath": {
+						"type": "string",
+						"description": "要列出的目录路径，相对于工作区根目录。默认 \".\"（根目录）。"
+					}
+				}
+			}
+		}
+	}, {
+		"type": "function",
+		"function": {
 			"name": "read",
-			"description": "从本地文件系统读取文件或目录。如果路径不存在，则返回错误。\n\n使用说明：\n- filePath 参数必须是绝对路径\n- 默认情况下，此工具从文件开头返回最多 2000 行\n- offset 参数是开始读取的行号（从 1 开始）\n- 要读取后面的内容，使用更大的 offset 重新调用此工具\n- 使用 grep 工具在大文件或长行文件中查找特定内容\n- 如果不确定文件路径是否正确，使用 glob 工具按 glob 模式查找文件名\n- 返回内容中每行以 <行号>: <内容> 格式显示\n- 超过 2000 个字符的行会被截断\n- 当你确定需要读取多个文件时，并行调用此工具\n- 避免频繁小段读取（30 行的块）。如果需要更多上下文，读取更大的范围",
+			"description": "读取工作区中的文件内容。先使用 list_dir 找到文件路径，再用此工具读取。",
 			"parameters": {
 				"type": "object",
 				"properties": {
 					"filePath": {
 						"type": "string",
-						"description": "要读取的文件路径。必须是绝对路径。"
+						"description": "要读取的文件路径，相对于工作区根目录。"
 					}
 				},
 				"required": ["filePath"]
