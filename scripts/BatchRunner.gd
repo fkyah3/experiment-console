@@ -143,8 +143,9 @@ func _on_done(wd: Dictionary) -> void:
 
 
 func _on_error(msg: String, wd: Dictionary) -> void:
-	push_warning("Batch worker #%d error: %s" % [wd.index, msg])
+	push_error("Batch worker #%d error: %s" % [wd.index, msg])
 	wd.ok = false
+	wd.response_body = msg
 	_finish(wd)
 
 

@@ -77,6 +77,11 @@ func _process(_delta: float) -> void:
 		HTTPClient.STATUS_BODY:
 			if not _client.has_response():
 				return
+			if _client.get_response_code() != 200:
+				var err_body := _client.read_response_body_chunk().get_string_from_utf8()
+				connection_error.emit("API " + str(_client.get_response_code()) + ": " + err_body.left(200))
+				stop()
+				return
 			_read_chunks()
 
 		HTTPClient.STATUS_DISCONNECTED:
