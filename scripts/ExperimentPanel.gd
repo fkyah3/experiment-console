@@ -624,7 +624,9 @@ func _on_save() -> void:
 			entry = dir.get_next()
 		dir.list_dir_end()
 
-	var fname := "round-%02d.md" % round_num
+	var now := Time.get_datetime_dict_from_system()
+	var ts := "%04d%02d%02d_%02d%02d%02d" % [now.year, now.month, now.day, now.hour, now.minute, now.second]
+	var fname := "%s_round-%02d.md" % [ts, round_num]
 	var fpath := exp_dir.path_join(fname)
 
 	var msgs_to_send := APIBuilder.build_api_messages(_model_data.messages)
@@ -637,7 +639,7 @@ func _on_save() -> void:
 	if not ok:
 		_set_status("保存失败")
 	else:
-		_set_status("已保存: %s/round-%02d.md" % [safe_title, round_num])
+		_set_status("已保存: %s/%s" % [safe_title, fname])
 		experiment_saved.emit(fpath)
 
 
