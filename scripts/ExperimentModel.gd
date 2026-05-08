@@ -16,7 +16,7 @@ func clear() -> void:
 
 
 func add(role: String, subtype: String = "content") -> int:
-	var block := {"role": role, "content": "", "reasoning": "", "tool_calls": []}
+	var block := {"role": role, "content": "", "reasoning": "", "tool_calls": [], "carry_reasoning": role == "assistant"}
 	if subtype == "reasoning":
 		block["reasoning"] = "在此输入思考过程..."
 	elif role == "tool":

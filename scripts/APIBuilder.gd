@@ -16,7 +16,12 @@ static func build_api_messages(messages: Array) -> Array:
 			continue
 
 		if msg["role"] == "assistant":
-			if not reasoning.is_empty():
+			var carry: bool = m.get("carry_reasoning", false)
+			if carry and not reasoning.is_empty():
+				msg["reasoning_content"] = reasoning
+				if not content.is_empty():
+					msg["content"] = content
+			elif not reasoning.is_empty():
 				if not content.is_empty():
 					msg["content"] = reasoning + "\n" + content
 				else:

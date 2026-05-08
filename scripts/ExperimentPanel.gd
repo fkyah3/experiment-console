@@ -338,6 +338,13 @@ func _build_block_widget(idx: int, data: Dictionary) -> Dictionary:
 		rtag.custom_minimum_size.x = 60
 		header.add_child(rtag)
 
+	if data.get("role", "") == "assistant":
+		var carry_cb := CheckBox.new()
+		carry_cb.text = "携带"
+		carry_cb.button_pressed = data.get("carry_reasoning", true)
+		carry_cb.toggled.connect(func(on: bool): data["carry_reasoning"] = on)
+		header.add_child(carry_cb)
+
 	var expand_btn := Button.new()
 	expand_btn.text = "▼"
 	expand_btn.custom_minimum_size.x = 24
@@ -586,17 +593,51 @@ func _on_save() -> void:
 	if title.is_empty():
 		title = "untitled"
 
+	var safe_title := ""
+	var illegal := [":", "\\", "/", "*", "?", "\"", "<", ">", "|"]
+	for c in title:
+		var skip := false
+		for il in illegal:
+			if c == il:
+				skip = true
+				break
+		if not skip:
+			safe_title += c if c != " " else "_"
+	safe_title = safe_title.strip_edges().left(60)
+	if safe_title.is_empty():
+		safe_title = "untitled"
+
+	var exp_dir := _config.experiments_path.path_join(safe_title)
+	DirAccess.make_dir_recursive_absolute(exp_dir)
+	var round_num := 1
+	var dir := DirAccess.open(exp_dir)
+	if dir:
+		dir.list_dir_begin()
+		var entry := dir.get_next()
+		while not entry.is_empty():
+			if entry.begins_with("round-") and entry.ends_with(".md"):
+				var num_str := entry.trim_prefix("round-").trim_suffix(".md")
+				if num_str.is_valid_int():
+					var n := num_str.to_int()
+					if n >= round_num:
+						round_num = n + 1
+			entry = dir.get_next()
+		dir.list_dir_end()
+
+	var fname := "round-%02d.md" % round_num
+	var fpath := exp_dir.path_join(fname)
+
 	var msgs_to_send := APIBuilder.build_api_messages(_model_data.messages)
-	var fpath := _store.save_experiment(
-		title, _model, _thinking, _effort, _max_tokens, _temperature,
+	var ok := _store.save_experiment_file(
+		fpath, safe_title, _model, _thinking, _effort, _max_tokens, _temperature,
 		msgs_to_send, _model_data.messages,
 		log_request.text, _last_response_body,
 		_last_usage, notes_input.text
 	)
-	if fpath.is_empty():
+	if not ok:
 		_set_status("保存失败")
 	else:
-		_set_status("已保存: " + fpath.get_file())
+		_set_status("已保存: %s/round-%02d.md" % [safe_title, round_num])
 		experiment_saved.emit(fpath)
 
 

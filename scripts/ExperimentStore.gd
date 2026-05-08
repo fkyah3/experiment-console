@@ -30,28 +30,62 @@ func save_experiment(
 ) -> String:
 	var now := Time.get_datetime_dict_from_system()
 	var ts := "%04d%02d%02d_%02d%02d" % [now.year, now.month, now.day, now.hour, now.minute]
-
-	var safe_title := _sanitize_filename(title)
-	safe_title = safe_title.left(60)
+	var safe_title := _sanitize_filename(title).left(60)
 	if safe_title.is_empty():
 		safe_title = "untitled"
-
 	var fname := "%s_%s.md" % [ts, safe_title]
 	var fpath := _experiments_dir.path_join(fname)
-
 	if FileAccess.file_exists(fpath):
 		var n := 1
 		while FileAccess.file_exists(_experiments_dir.path_join("%s_%s_%d.md" % [ts, safe_title, n])):
 			n += 1
 		fname = "%s_%s_%d.md" % [ts, safe_title, n]
 		fpath = _experiments_dir.path_join(fname)
+	if _write(fpath, title, model, thinking, effort, max_tokens, temperature, messages, raw_messages, request_body, response_body, usage, notes):
+		return fpath
+	return ""
 
+
+func save_experiment_file(
+	fpath: String,
+	title: String,
+	model: String,
+	thinking: String,
+	effort: String,
+	max_tokens: int,
+	temperature: float,
+	messages: Array,
+	raw_messages: Array,
+	request_body: String,
+	response_body: String,
+	usage: Dictionary,
+	notes: String
+) -> bool:
+	return _write(fpath, title, model, thinking, effort, max_tokens, temperature, messages, raw_messages, request_body, response_body, usage, notes)
+
+
+func _write(
+	fpath: String,
+	title: String,
+	model: String,
+	thinking: String,
+	effort: String,
+	max_tokens: int,
+	temperature: float,
+	messages: Array,
+	raw_messages: Array,
+	request_body: String,
+	response_body: String,
+	usage: Dictionary,
+	notes: String
+) -> bool:
+	var now := Time.get_datetime_dict_from_system()
 	var created := "%04d-%02d-%02dT%02d:%02d:%02d+08:00" % [now.year, now.month, now.day, now.hour, now.minute, now.second]
 
 	var file := FileAccess.open(fpath, FileAccess.WRITE)
 	if file == null:
 		push_error("ExperimentStore: 无法创建文件 " + fpath)
-		return ""
+		return false
 
 	file.store_string("---\n")
 	file.store_string("type: \"experiment\"\n")
@@ -103,7 +137,7 @@ func save_experiment(
 		file.store_string("\n")
 
 	file.close()
-	return fpath
+	return true
 
 
 func list_experiments() -> Array[Dictionary]:
