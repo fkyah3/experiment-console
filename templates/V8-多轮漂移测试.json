@@ -1,5 +1,5 @@
 {
-	"name": "多轮漂移测试",
+	"name": "V8-多轮漂移测试",
 	"model": "deepseek-v4-flash",
 	"thinking": "enabled",
 	"effort": "high",
