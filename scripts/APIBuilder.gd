@@ -33,19 +33,11 @@ static func build_api_messages(messages: Array) -> Array:
 				result.append(msg)
 				continue
 
-			var carry: bool = m.get("carry_reasoning", false)
-			if carry and not reasoning.is_empty():
+			if not reasoning.is_empty():
 				msg["reasoning_content"] = reasoning
-				if not content.is_empty():
-					msg["content"] = content
-			elif not reasoning.is_empty():
-				if not content.is_empty():
-					msg["content"] = reasoning + "\n" + content
-				else:
-					msg["content"] = reasoning
-			elif not content.is_empty():
+			if not content.is_empty():
 				msg["content"] = content
-			else:
+			if reasoning.is_empty() and content.is_empty():
 				continue
 
 		if not content.is_empty() and not msg.has("content"):
@@ -84,6 +76,7 @@ static func build_body_dict(
 	body["temperature"] = temperature
 	if not tools.is_empty():
 		body["tools"] = tools
+		body["tool_choice"] = "auto"
 	return body
 
 

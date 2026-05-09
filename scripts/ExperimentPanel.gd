@@ -20,10 +20,13 @@ var _accumulated_reasoning: String = ""
 var _last_response_body: String = ""
 var _last_usage: Dictionary = {}
 var _tc_round: int = 0
-var _tc_max_rounds: int = 5
+## 工具调用最大轮数
+## 范围 0-50，0 表示不调工具
+## 默认 50（测试阶段开大一点）
+@export var _tc_max_rounds: int = 50
 
 var _model: String = "deepseek-v4-flash"
-var _thinking: String = "enabled"
+var _thinking: String = "官方预设"
 var _effort: String = "high"
 var _max_tokens: int = 4096
 var _temperature: float = 0.0
@@ -506,6 +509,12 @@ func _do_send() -> void:
 		tools = APIBuilder.build_tools()
 
 	var msgs_to_send := APIBuilder.build_api_messages(_model_data.messages)
+
+	if _thinking == "官方预设":
+		for msg in msgs_to_send:
+			if msg.get("role") == "assistant" and not msg.has("reasoning_content"):
+				msg["reasoning_content"] = "(reasoning omitted)"
+
 	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, msgs_to_send, _top_p, _frequency_penalty, true, tools)
 	var body_str := JSON.stringify(body_dict, "\t")
 	log_request.text = body_str
@@ -619,7 +628,7 @@ func _on_tool_calls_done(tool_calls: Array) -> void:
 			"role": "tool",
 			"tool_call_id": call_id,
 			"name": func_name,
-			 "content": content
+			"content": content
 		})
 
 	_rebuild_list()

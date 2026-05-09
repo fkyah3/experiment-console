@@ -92,7 +92,7 @@ func _process(_delta: float) -> void:
 		HTTPClient.STATUS_DISCONNECTED:
 			if _should_run:
 				_should_run = false
-				if _had_tool_calls:
+				if not _tool_call_buf.is_empty():
 					tool_calls_done.emit(_tool_call_buf)
 				else:
 					stream_finished.emit()
@@ -126,7 +126,7 @@ func _parse_event(line: String) -> void:
 	var data_str := line.substr(6).strip_edges()
 
 	if data_str == "[DONE]":
-		if _had_tool_calls:
+		if not _tool_call_buf.is_empty():
 			tool_calls_done.emit(_tool_call_buf)
 		else:
 			stream_finished.emit()
@@ -147,15 +147,12 @@ func _parse_event(line: String) -> void:
 
 	var delta = choices[0].get("delta", {})
 
-	var finish_reason = choices[0].get("finish_reason", "")
-	if finish_reason != null and str(finish_reason) == "tool_calls":
-		_had_tool_calls = true
-
 	if delta.has("reasoning_content") and delta["reasoning_content"] != null:
 		reasoning_chunk.emit(delta["reasoning_content"])
 	if delta.has("content") and delta["content"] != null:
 		content_chunk.emit(delta["content"])
 	if delta.has("tool_calls") and delta["tool_calls"] != null:
+		_had_tool_calls = true
 		var tc_array: Array = delta["tool_calls"]
 		for tc in tc_array:
 			var idx: int = tc.get("index", 0)
