@@ -25,17 +25,17 @@ var _max_tokens: int = 4096
 var _temperature: float = 0.0
 var _top_p: float = 1.0
 var _frequency_penalty: float = 0.0
+var _workspace_path: String = ""
+var _tc_max_rounds: int = 50
+var _explore_separate: bool = false
 
 var _max_concurrency: int = 5
 var _parent_node: Node
-var _templates_path: String = ""
 
 
-func setup(parent: Node, api_key: String, templates_path: String, max_concurrency: int = 5) -> void:
-	_max_concurrency = max_concurrency
+func setup(parent: Node, api_key: String) -> void:
 	_parent_node = parent
 	_api_key = api_key
-	_templates_path = templates_path
 
 
 func start(
@@ -50,7 +50,11 @@ func start(
 	max_tokens: int,
 	temperature: float,
 	top_p: float = 1.0,
-	frequency_penalty: float = 0.0
+	frequency_penalty: float = 0.0,
+	workspace_path: String = "",
+	tc_max_rounds: int = 50,
+	concurrency: int = 5,
+	explore_separate: bool = false
 ) -> void:
 	_model = model
 	_thinking = thinking
@@ -59,6 +63,9 @@ func start(
 	_temperature = temperature
 	_top_p = top_p
 	_frequency_penalty = frequency_penalty
+	_workspace_path = workspace_path
+	_tc_max_rounds = tc_max_rounds
+	_explore_separate = explore_separate
 	_total = count
 	_done = 0
 	_failed = 0
@@ -78,50 +85,99 @@ func start(
 	for i in count:
 		_queue.append(prototype_messages.duplicate(true))
 
+	_max_concurrency = concurrency
 	_start_workers()
 
 
 func _start_workers() -> void:
 	var n := mini(_max_concurrency, _total)
 	for i in n:
-		_start_worker()
+		_launch_worker()
 
 
-func _start_worker() -> void:
+func _launch_worker() -> void:
 	if _queue.is_empty():
 		return
 	var raw_messages: Array = _queue.pop_front()
-	var api_messages := APIBuilder.build_api_messages(raw_messages)
-	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, api_messages, _top_p, _frequency_penalty)
-	var body_str := JSON.stringify(body_dict, "\t")
+	var idx := _total - _queue.size() - _running
+
+	var worker_msgs: Array
+	if _explore_separate and not _workspace_path.is_empty():
+		# 探索分离模式：本地扫描→读文件→组装假 user 消息→单轮 API
+		var file_paths := _scan_key_files(_workspace_path, 20)
+		var file_contents := ""
+		var count := 0
+		for fpath in file_paths:
+			if count >= 5:
+				break
+			var raw := _read_tool_file(fpath)
+			var truncated := raw
+			if raw.length() > 10000:
+				truncated = raw.left(10000) + "\n...（共 %d 字，已截断）" % raw.length()
+			file_contents += "\n--- 文件: %s ---\n%s" % [fpath, truncated]
+			count += 1
+
+		var original: String = ""
+		if raw_messages.size() >= 2:
+			original = str(raw_messages[1].get("content", ""))
+		var combined := "以下是工程层根据目录结构读取的关键文件内容：\n%s\n\n请基于以上文件内容，%s" % [file_contents, original]
+		worker_msgs = [raw_messages[0].duplicate(true), {"role": "user", "content": combined}]
+	else:
+		worker_msgs = raw_messages.duplicate(true)
+
+	var wd := {
+		"client": null,
+		"messages": worker_msgs,
+		"raw_messages": raw_messages,
+		"content": "",
+		"reasoning": "",
+		"usage": {},
+		"response_body": "",
+		"ok": false,
+		"index": idx,
+		"round": _tc_max_rounds if _explore_separate else 0,
+	}
+
+	_running += 1
+	_send_worker(wd)
+	_dispatch_progress()
+
+
+func _send_worker(wd: Dictionary) -> void:
+	var tools: Array = []
+	if wd.round < _tc_max_rounds:
+		tools = APIBuilder.build_tools()
+
+	var api_messages := APIBuilder.build_api_messages(wd.messages)
+
+	if _thinking == "思考模式":
+		for msg in api_messages:
+			if msg.get("role") == "assistant" and not msg.has("reasoning_content"):
+				msg["reasoning_content"] = "(reasoning omitted)"
+
+	wd.api_messages = api_messages
+	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, api_messages, _top_p, _frequency_penalty, true, tools)
+	wd.body_str = JSON.stringify(body_dict, "\t")
+
+	wd.content = ""
+	wd.reasoning = ""
+	wd.usage = {}
+
+	if wd.client:
+		wd.client.queue_free()
 
 	var client := DeepSeekStreamClient.new()
 	_parent_node.add_child(client)
 	client.api_key = _api_key
+	wd.client = client
 
-	var idx := _total - _queue.size() - _running
-	var wd: Dictionary = {
-		"client": client,
-		"raw_messages": raw_messages,
-		"api_messages": api_messages,
-		"body_str": body_str,
-		"content": "",
-		"reasoning": "",
-		"response_body": "",
-		"usage": {},
-		"ok": false,
-		"index": idx,
-		"start_ms": Time.get_ticks_msec(),
-	}
-
-	_running += 1
 	client.content_chunk.connect(_on_content_chunk.bind(wd))
 	client.reasoning_chunk.connect(_on_reasoning_chunk.bind(wd))
 	client.stream_finished.connect(_on_done.bind(wd))
+	client.tool_calls_done.connect(_on_tool_calls_done.bind(wd))
 	client.usage_received.connect(_on_usage.bind(wd))
 	client.connection_error.connect(_on_error.bind(wd))
-	client.start_streaming(body_str)
-	_dispatch_progress()
+	client.start_streaming(wd.body_str)
 
 
 func _on_content_chunk(text: String, wd: Dictionary) -> void:
@@ -142,24 +198,175 @@ func _on_done(wd: Dictionary) -> void:
 	_finish(wd)
 
 
+func _on_tool_calls_done(tool_calls: Array, wd: Dictionary) -> void:
+	if wd.client:
+		wd.client.queue_free()
+		wd.client = null
+
+	wd.round += 1
+	if wd.round >= _tc_max_rounds:
+		_on_error("工具调用已达上限", wd)
+		return
+
+	# ① 先把 AI 的回复作为 assistant 消息写入 wd.messages
+	var tc_for_api: Array = []
+	for tc in tool_calls:
+		tc_for_api.append({
+			"id": tc.get("id", ""),
+			"type": "function",
+			"function": {
+				"name": tc.get("name", ""),
+				"arguments": tc.get("arguments", "")
+			}
+		})
+
+	wd.messages.append({
+		"role": "assistant",
+		"content": wd.content,
+		"reasoning": wd.reasoning,
+		"tool_calls": tc_for_api
+	})
+
+	# ② 再追加 tool 执行结果
+	for tc in tool_calls:
+		var content := _execute_tool(tc.get("name", ""), tc.get("arguments", "{}"))
+		wd.messages.append({
+			"role": "tool",
+			"tool_call_id": tc.get("id", ""),
+			"name": tc.get("name", ""),
+			"content": content
+		})
+
+	_send_worker(wd)
+
+
+func _execute_tool(name: String, args_str: String) -> String:
+	var args := JSON.parse_string(args_str) as Dictionary
+	match name:
+		"list_dir":
+			var dir_path: String = "."
+			if args != null:
+				dir_path = args.get("dirPath", ".")
+			return _list_dir(dir_path)
+		"read":
+			var file_path: String = ""
+			if args != null:
+				file_path = args.get("filePath", "")
+			return _read_tool_file(file_path)
+		_:
+			return "[未知工具: %s]" % name
+
+
+func _read_tool_file(filePath: String) -> String:
+	var shadow := _shadow_path(filePath)
+	if FileAccess.file_exists(shadow):
+		return FileAccess.get_file_as_string(shadow)
+	var base := _workspace_path
+	if not base.ends_with("/"):
+		base += "/"
+	var fpath := filePath
+	if not fpath.begins_with("E:/") and not fpath.begins_with("e:/") and not fpath.begins_with("C:/") and not fpath.begins_with("c:/"):
+		fpath = base.path_join(filePath)
+	if FileAccess.file_exists(fpath):
+		return FileAccess.get_file_as_string(fpath)
+	return "[文件不存在: %s]" % filePath
+
+
+func _list_dir(dirPath: String) -> String:
+	var base := _workspace_path
+	if not base.ends_with("/"):
+		base += "/"
+	var dpath := dirPath
+	if not dpath.begins_with("E:/") and not dpath.begins_with("e:/") and not dpath.begins_with("C:/") and not dpath.begins_with("c:/"):
+		dpath = base.path_join(dirPath)
+	var dir := DirAccess.open(dpath)
+	if dir == null:
+		return "[目录不存在: %s]" % dirPath
+	var result: String = ""
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while not fname.is_empty():
+		if dir.current_is_dir():
+			result += "[DIR]  %s/\n" % fname
+		else:
+			result += "[FILE] %s\n" % fname
+		fname = dir.get_next()
+	dir.list_dir_end()
+	return result.strip_edges()
+
+
 func _on_error(msg: String, wd: Dictionary) -> void:
+	if wd.client:
+		wd.client.queue_free()
+		wd.client = null
 	push_error("Batch worker #%d error: %s" % [wd.index, msg])
 	wd.ok = false
 	wd.response_body = msg
 	_finish(wd)
 
 
+func _scan_key_files(base_dir: String, max_return: int) -> Array[String]:
+	var result: Array[String] = []
+	var priority: Array[String] = []
+	var rest: Array[String] = []
+	_scan_dir(base_dir, "", priority, rest)
+	priority.sort()
+	rest.sort()
+	for p in priority:
+		if result.size() >= max_return:
+			break
+		result.append(p)
+	for r in rest:
+		if result.size() >= max_return:
+			break
+		result.append(r)
+	return result
+
+
+func _scan_dir(base: String, rel: String, priority: Array[String], rest: Array[String]) -> void:
+	var dir := DirAccess.open(base.path_join(rel))
+	if dir == null:
+		return
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while not fname.is_empty():
+		if fname.begins_with("."):
+			fname = dir.get_next()
+			continue
+		var full_rel := rel.path_join(fname) if not rel.is_empty() else fname
+		if dir.current_is_dir():
+			if fname == "node_modules":
+				fname = dir.get_next()
+				continue
+			_scan_dir(base, full_rel, priority, rest)
+		else:
+			if fname.ends_with(".ts") or fname.ends_with(".tsx") or fname.ends_with(".js") or fname.ends_with(".json") or fname.ends_with(".md"):
+				if fname.contains("snapshot"):
+					rest.append(full_rel)
+				elif fname.contains("provider") or fname.contains("index") or fname.contains("main") or fname.contains("core") or fname.contains("schema") or fname.contains("auth"):
+					priority.append(full_rel)
+				else:
+					rest.append(full_rel)
+		fname = dir.get_next()
+	dir.list_dir_end()
+
+
+func _shadow_path(filePath: String) -> String:
+	return ProjectSettings.globalize_path("user://opencode-shadow/").path_join(filePath)
+
+
 func _finish(wd: Dictionary) -> void:
+	_running -= 1
+
 	if wd.client:
 		wd.client.queue_free()
-
-	_running -= 1
+		wd.client = null
 
 	if wd.ok:
 		var title := "batch_%03d" % wd.index
 		_save_store.save_experiment(
 			title, _model, _thinking, _effort, _max_tokens, _temperature,
-			wd.api_messages, wd.raw_messages,
+			wd.api_messages, wd.messages,
 			wd.body_str, wd.response_body, wd.usage, ""
 		)
 		_stats.append(_calc_stats(wd))
@@ -175,7 +382,7 @@ func _finish(wd: Dictionary) -> void:
 		return
 
 	if not _queue.is_empty():
-		_start_worker()
+		_launch_worker()
 
 
 func _calc_stats(wd: Dictionary) -> Dictionary:
@@ -195,6 +402,9 @@ func _calc_stats(wd: Dictionary) -> Dictionary:
 			s["tokens_per_sec"] = float(total_tok) / (float(duration_ms) / 1000.0)
 	s["reasoning_chars"] = wd.reasoning.length()
 	s["output_chars"] = wd.content.length()
+	s["tool_rounds"] = wd.round
+	if _explore_separate and wd.round >= _tc_max_rounds:
+		s["tool_rounds"] = 0
 	s["reasoning_language"] = APIBuilder.detect_language(wd.reasoning)
 	s["output_language"] = APIBuilder.detect_language(wd.content)
 	s["reasoning_first_line"] = wd.reasoning.left(80).replace("\n", " ")
@@ -215,6 +425,7 @@ func _generate_summary() -> void:
 	lines.append("- **推理强度**: %s\n" % _effort)
 	lines.append("- **max_tokens**: %d\n" % _max_tokens)
 	lines.append("- **温度**: %.1f\n" % _temperature)
+	lines.append("- **工具调用上限**: %d\n" % _tc_max_rounds)
 	lines.append("- **总次数**: %d\n" % _total)
 	lines.append("- **成功**: %d\n" % _done)
 	lines.append("- **失败**: %d\n" % _failed)
@@ -251,6 +462,7 @@ func _generate_summary() -> void:
 		var prompt_vals: Array[int] = []
 		var completion_vals: Array[int] = []
 		var total_vals: Array[int] = []
+		var tool_rounds_vals: Array[int] = []
 		var zh_count: int = 0
 		var en_count: int = 0
 		for s in _stats:
@@ -259,6 +471,7 @@ func _generate_summary() -> void:
 			prompt_vals.append(int(s.get("prompt_tokens", 0)))
 			completion_vals.append(int(s.get("completion_tokens", 0)))
 			total_vals.append(int(s.get("total_tokens", 0)))
+			tool_rounds_vals.append(int(s.get("tool_rounds", 0)))
 			match s.get("reasoning_language", ""):
 				"zh": zh_count += 1
 				"en": en_count += 1
@@ -283,6 +496,7 @@ func _generate_summary() -> void:
 		lines.append("| total_tokens 平均值 | %.1f |\n" % (_avg(total_vals)))
 		lines.append("| reasoning 中文占比 | %d / %d (%.1f%%) |\n" % [zh_count, _stats.size(), float(zh_count) / float(_stats.size()) * 100.0])
 		lines.append("| reasoning 英文占比 | %d / %d (%.1f%%) |\n" % [en_count, _stats.size(), float(en_count) / float(_stats.size()) * 100.0])
+		lines.append("| 工具调用轮数 平均值 | %.1f |\n" % (_avg(tool_rounds_vals)))
 		lines.append("\n")
 
 		var total_duration_ms: int = Time.get_ticks_msec() - _start_ms
@@ -299,11 +513,12 @@ func _generate_summary() -> void:
 		lines.append("\n")
 
 		lines.append("## 每轮明细\n\n")
-		lines.append("| # | reasoning_tokens | duration | tok/s | reasoning_lang | output_lang | reasoning_chars | output_chars | reply 前80字 |\n")
-		lines.append("|:-:|:---------------:|:--------:|:-----:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
+		lines.append("| # | reasoning_tokens | tool_rounds | duration | tok/s | reasoning_lang | output_lang | reasoning_chars | output_chars | reply 前80字 |\n")
+		lines.append("|:-:|:---------------:|:-----------:|:--------:|:-----:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
 		for s in _stats:
 			var idx: int = int(s.get("index", 0))
 			var rt: int = int(s.get("reasoning_tokens", 0))
+			var tool_rounds_val: int = int(s.get("tool_rounds", 0))
 			var dm: int = int(s.get("duration_ms", 0))
 			var tps: float = float(s.get("tokens_per_sec", 0.0))
 			var rl: String = str(s.get("reasoning_language", "?"))
@@ -311,7 +526,7 @@ func _generate_summary() -> void:
 			var rc: int = int(s.get("reasoning_chars", 0))
 			var oc: int = int(s.get("output_chars", 0))
 			var reply: String = str(s.get("output_first_line", ""))
-			lines.append("| %d | %d | %.1fs | %.1f | %s | %s | %d | %d | %s |\n" % [idx, rt, float(dm) / 1000.0, tps, rl, ol, rc, oc, reply])
+			lines.append("| %d | %d | %d | %.1fs | %.1f | %s | %s | %d | %d | %s |\n" % [idx, rt, tool_rounds_val, float(dm) / 1000.0, tps, rl, ol, rc, oc, reply])
 
 	lines.append("\n")
 	lines.append("---\n")

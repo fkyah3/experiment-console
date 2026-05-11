@@ -6,8 +6,10 @@ static func build_api_messages(messages: Array) -> Array:
 	var result: Array = []
 	for m in messages:
 		var msg: Dictionary = {"role": m.get("role", "user")}
-		var content: String = m.get("content", "")
-		var reasoning: String = m.get("reasoning", "")
+		var raw_content = m.get("content")
+		var content: String = "" if raw_content == null else str(raw_content)
+		var raw_reasoning = m.get("reasoning")
+		var reasoning: String = "" if raw_reasoning == null else str(raw_reasoning)
 
 		if msg["role"] == "tool":
 			var tc_id: String = m.get("tool_call_id", "")
@@ -64,11 +66,11 @@ static func build_body_dict(
 		"messages": msg_list,
 		"stream": stream,
 	}
-	if thinking == "官方预设":
+	if thinking == "思考模式":
 		body["thinking"] = {"type": "enabled"}
 		if effort != "不传":
 			body["reasoning_effort"] = effort
-	elif thinking == "自定义":
+	elif thinking == "无思考模式":
 		body["thinking"] = {"type": "disabled"}
 		body["top_p"] = top_p
 		body["frequency_penalty"] = frequency_penalty

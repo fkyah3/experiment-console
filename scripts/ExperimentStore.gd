@@ -26,7 +26,8 @@ func save_experiment(
 	request_body: String,
 	response_body: String,
 	usage: Dictionary,
-	notes: String
+	notes: String,
+	duration_ms: int = 0
 ) -> String:
 	var utc := Time.get_datetime_dict_from_system()
 	var now: Dictionary = utc.duplicate()
@@ -45,7 +46,7 @@ func save_experiment(
 			n += 1
 		fname = "%s_%s_%d.md" % [ts, safe_title, n]
 		fpath = _experiments_dir.path_join(fname)
-	if _write(fpath, title, model, thinking, effort, max_tokens, temperature, messages, raw_messages, request_body, response_body, usage, notes):
+	if _write(fpath, title, model, thinking, effort, max_tokens, temperature, messages, raw_messages, request_body, response_body, usage, notes, duration_ms):
 		return fpath
 	return ""
 
@@ -63,9 +64,10 @@ func save_experiment_file(
 	request_body: String,
 	response_body: String,
 	usage: Dictionary,
-	notes: String
+	notes: String,
+	duration_ms: int = 0
 ) -> bool:
-	return _write(fpath, title, model, thinking, effort, max_tokens, temperature, messages, raw_messages, request_body, response_body, usage, notes)
+	return _write(fpath, title, model, thinking, effort, max_tokens, temperature, messages, raw_messages, request_body, response_body, usage, notes, duration_ms)
 
 
 func _write(
@@ -81,7 +83,8 @@ func _write(
 	request_body: String,
 	response_body: String,
 	usage: Dictionary,
-	notes: String
+	notes: String,
+	duration_ms: int = 0
 ) -> bool:
 	var utc := Time.get_datetime_dict_from_system()
 	var now: Dictionary = utc.duplicate()
@@ -104,6 +107,9 @@ func _write(
 	file.store_string("effort: \"%s\"\n" % effort)
 	file.store_string("max_tokens: %d\n" % max_tokens)
 	file.store_string("temperature: %.1f\n" % temperature)
+	if duration_ms > 0:
+		var secs := duration_ms / 1000.0
+		file.store_string("duration: %.1f\n" % secs)
 	file.store_string("---\n\n")
 
 	file.store_string("## messages（原始积木，reasoning 与 content 分离）\n\n")
@@ -172,7 +178,7 @@ func list_experiments() -> Array[Dictionary]:
 	return result
 
 
-func save_template(name: String, model: String, thinking: String, effort: String, max_tokens: int, messages: Array) -> void:
+func save_template(name: String, model: String, thinking: String, effort: String, max_tokens: int, messages: Array, inject_anchor: bool = false) -> void:
 	var fname := _sanitize_filename(name) + ".json"
 	if fname.is_empty():
 		fname = "untitled.json"
@@ -184,6 +190,7 @@ func save_template(name: String, model: String, thinking: String, effort: String
 		"effort": effort,
 		"max_tokens": max_tokens,
 		"messages": messages,
+		"inject_anchor": inject_anchor,
 	}
 	var file := FileAccess.open(fpath, FileAccess.WRITE)
 	if file:

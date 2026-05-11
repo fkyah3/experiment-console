@@ -443,7 +443,7 @@ func _load_round_files() -> void:
 	dir.list_dir_end()
 	_round_files.sort()
 
-	if not _summary_rows.is_empty():
+	if not _summary_rows.is_empty() and round_list.get_item_count() > 0:
 		round_list.select(0)
 		_select_round(0)
 
@@ -465,7 +465,11 @@ func _on_next() -> void:
 
 
 func _select_round(idx: int) -> void:
+	if idx < 0 or idx >= _summary_rows.size():
+		return
 	_selected_idx = idx
+	if idx >= round_list.get_item_count():
+		return
 	round_list.select(idx)
 	_update_nav_buttons()
 	var row := _summary_rows[idx]

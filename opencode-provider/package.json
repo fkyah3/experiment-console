@@ -1,0 +1,5 @@
+{
+  "name": "opencode-provider",
+  "private": true,
+  "description": "Minimal opencode Provider source for experiment reproduction"
+}
