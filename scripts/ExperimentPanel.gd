@@ -79,9 +79,10 @@ var _sub_agent_max_rounds: int = 30
 
 func _ready() -> void:
 	_config = ConfigManager.new()
-	api_key = _config.api_key
 	_provider_host = _config.api_host
 	_provider_path = _config.api_path
+	_provider = "opencode_go" if _config.api_host.find("opencode") != -1 else "deepseek"
+	api_key = _config.opencode_key if _provider == "opencode_go" else _config.deepseek_key
 	_store = ExperimentStore.new(_config.experiments_path, _config.templates_path)
 	_model_data = ExperimentModelScript.new()
 	_batch_runner = BatchRunnerScript.new()
@@ -171,17 +172,18 @@ func _build_dynamic() -> void:
 			_provider = "deepseek"
 			_provider_host = "api.deepseek.com"
 			_provider_path = "/chat/completions"
+			api_key = _config.deepseek_key
 		else:
 			_provider = "opencode_go"
 			_provider_host = "opencode.ai"
 			_provider_path = "/zen/go/v1/chat/completions"
-			if _config.api_key.is_empty() or _config.api_key.find("sk-55") == -1:
-				_config.api_key = "sk-55JdmCnzVac6JlUCFFRChiZXHPzCk9tUOJr4uFlsLyrBU4S04WHggjQpL7LPrhEE"
-				api_key = _config.api_key
-				_batch_runner.setup(self, api_key)
+			api_key = _config.opencode_key
 		_config.api_host = _provider_host
 		_config.api_path = _provider_path
+		_config.batch_host = _provider_host
+		_config.batch_path = _provider_path
 		_config.save_config()
+		_batch_runner.setup(self, api_key)
 	)
 	hbox.add_child(prov_select)
 
@@ -1140,14 +1142,23 @@ func _open_settings() -> void:
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_theme_constant_override("separation", 8)
 
-	var key_label := Label.new()
-	key_label.text = "API Key（当前 Provider 用此 key）"
-	vbox.add_child(key_label)
-	var key_input := LineEdit.new()
-	key_input.text = _config.api_key
-	key_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	key_input.secret = true
-	vbox.add_child(key_input)
+	var deepseek_label := Label.new()
+	deepseek_label.text = "DeepSeek API Key"
+	vbox.add_child(deepseek_label)
+	var deepseek_input := LineEdit.new()
+	deepseek_input.text = _config.deepseek_key
+	deepseek_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	deepseek_input.secret = true
+	vbox.add_child(deepseek_input)
+
+	var opencode_label := Label.new()
+	opencode_label.text = "OpenCode Go API Key"
+	vbox.add_child(opencode_label)
+	var opencode_input := LineEdit.new()
+	opencode_input.text = _config.opencode_key
+	opencode_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	opencode_input.secret = true
+	vbox.add_child(opencode_input)
 
 	var exp_label := Label.new()
 	exp_label.text = "实验存储路径"
@@ -1201,13 +1212,17 @@ func _open_settings() -> void:
 	save_btn_dialog.text = "保存"
 	save_btn_dialog.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	save_btn_dialog.pressed.connect(func():
-		_config.api_key = key_input.text
+		_config.deepseek_key = deepseek_input.text
+		_config.opencode_key = opencode_input.text
+		if _provider == "deepseek":
+			api_key = _config.deepseek_key
+		else:
+			api_key = _config.opencode_key
 		_config.experiments_path = exp_input.text
 		_config.templates_path = tpl_input.text
 		_config.workspace_path = ws_input.text
 		_config.batch_concurrency = int(bc_input.value)
 		_config.save_config()
-		api_key = _config.api_key
 		_batch_runner.setup(self, api_key)
 		_store = ExperimentStore.new(_config.experiments_path, _config.templates_path)
 		_populate_template_menu()
@@ -1283,7 +1298,7 @@ func _start_batch(count: int, batch_name: String) -> void:
 		_top_p, _frequency_penalty,
 		_config.workspace_path, actual_max_rounds,
 		_config.batch_concurrency, _explore_separate,
-		_bare_mode
+		_bare_mode, _config.batch_host, _config.batch_path
 	)
 
 

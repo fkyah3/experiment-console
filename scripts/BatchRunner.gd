@@ -29,6 +29,8 @@ var _workspace_path: String = ""
 var _tc_max_rounds: int = 50
 var _explore_separate: bool = false
 var _bare_mode: bool = false
+var _batch_host: String = "api.deepseek.com"
+var _batch_path: String = "/chat/completions"
 
 var _max_concurrency: int = 5
 var _parent_node: Node
@@ -56,7 +58,9 @@ func start(
 	tc_max_rounds: int = 50,
 	concurrency: int = 5,
 	explore_separate: bool = false,
-	bare_mode: bool = false
+	bare_mode: bool = false,
+	host: String = "",
+	path: String = ""
 ) -> void:
 	_model = model
 	_thinking = thinking
@@ -69,6 +73,8 @@ func start(
 	_tc_max_rounds = tc_max_rounds
 	_explore_separate = explore_separate
 	_bare_mode = bare_mode
+	_batch_host = host if host != "" else _batch_host
+	_batch_path = path if path != "" else _batch_path
 	_total = count
 	_done = 0
 	_failed = 0
@@ -172,6 +178,8 @@ func _send_worker(wd: Dictionary) -> void:
 	var client := DeepSeekStreamClient.new()
 	_parent_node.add_child(client)
 	client.api_key = _api_key
+	client.api_host = _batch_host
+	client.api_path = _batch_path
 	wd.client = client
 
 	client.content_chunk.connect(_on_content_chunk.bind(wd))
