@@ -175,6 +175,10 @@ func _build_dynamic() -> void:
 			_provider = "opencode_go"
 			_provider_host = "opencode.ai"
 			_provider_path = "/zen/go/v1/chat/completions"
+			if _config.api_key.is_empty() or _config.api_key.find("sk-55") == -1:
+				_config.api_key = "sk-55JdmCnzVac6JlUCFFRChiZXHPzCk9tUOJr4uFlsLyrBU4S04WHggjQpL7LPrhEE"
+				api_key = _config.api_key
+				_batch_runner.setup(self, api_key)
 		_config.api_host = _provider_host
 		_config.api_path = _provider_path
 		_config.save_config()
@@ -1137,7 +1141,7 @@ func _open_settings() -> void:
 	vbox.add_theme_constant_override("separation", 8)
 
 	var key_label := Label.new()
-	key_label.text = "DeepSeek API Key"
+	key_label.text = "API Key（当前 Provider 用此 key）"
 	vbox.add_child(key_label)
 	var key_input := LineEdit.new()
 	key_input.text = _config.api_key
@@ -1204,6 +1208,7 @@ func _open_settings() -> void:
 		_config.batch_concurrency = int(bc_input.value)
 		_config.save_config()
 		api_key = _config.api_key
+		_batch_runner.setup(self, api_key)
 		_store = ExperimentStore.new(_config.experiments_path, _config.templates_path)
 		_populate_template_menu()
 		dialog.queue_free()
