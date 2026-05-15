@@ -1,7 +1,7 @@
 class_name ExperimentStore
 extends RefCounted
 
-const APIBuilder = preload("res://scripts/APIBuilder.gd")
+const _APIBuilder = preload("res://scripts/APIBuilder.gd")
 
 var _experiments_dir: String = "user://experiments/"
 var _templates_dir: String = "user://templates/"
@@ -294,8 +294,8 @@ func _compute_stats(response_body: String, usage: Dictionary) -> Dictionary:
 	var content: String = message.get("content", "")
 
 	stats["has_reasoning"] = not reasoning_content.is_empty()
-	stats["reasoning_language"] = APIBuilder.detect_language(reasoning_content)
-	stats["output_language"] = APIBuilder.detect_language(content)
+	stats["reasoning_language"] = _APIBuilder.detect_language(reasoning_content)
+	stats["output_language"] = _APIBuilder.detect_language(content)
 
 	if not reasoning_content.is_empty():
 		var rlen := reasoning_content.length()
