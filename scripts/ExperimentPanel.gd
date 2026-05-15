@@ -34,6 +34,7 @@ var _temperature: float = 0.0
 var _top_p: float = 1.0
 var _frequency_penalty: float = 0.0
 var _explore_separate: bool = false
+var _bare_mode: bool = false
 
 var _sub_agent_messages: Array = []
 var _sub_agent_round: int = 0
@@ -136,6 +137,13 @@ func _build_dynamic() -> void:
 	var hbox := get_node_or_null("VBox/ParamsPanel/ParamsHBox")
 	if hbox:
 		hbox.add_child(explore_cb)
+
+	var bare_cb := CheckBox.new()
+	bare_cb.text = "裸模式"
+	bare_cb.tooltip_text = "不传工具定义，纯 LLM 回复"
+	bare_cb.button_pressed = _bare_mode
+	bare_cb.toggled.connect(func(on: bool): _bare_mode = on)
+	hbox.add_child(bare_cb)
 
 	var load_btn := Button.new()
 	load_btn.text = "📄 加载文件"
@@ -577,7 +585,7 @@ func _on_send() -> void:
 
 func _do_send() -> void:
 	var tools: Array = []
-	if _tc_round < _tc_max_rounds:
+	if not _bare_mode and _tc_round < _tc_max_rounds:
 		tools = APIBuilder.build_tools()
 
 	var msgs_to_send := APIBuilder.build_api_messages(_model_data.messages)
@@ -1236,7 +1244,8 @@ func _start_batch(count: int, batch_name: String) -> void:
 		_model, _thinking, _effort, _max_tokens, _temperature,
 		_top_p, _frequency_penalty,
 		_config.workspace_path, actual_max_rounds,
-		_config.batch_concurrency, _explore_separate
+		_config.batch_concurrency, _explore_separate,
+		_bare_mode
 	)
 
 

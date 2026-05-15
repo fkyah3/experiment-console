@@ -28,6 +28,7 @@ var _frequency_penalty: float = 0.0
 var _workspace_path: String = ""
 var _tc_max_rounds: int = 50
 var _explore_separate: bool = false
+var _bare_mode: bool = false
 
 var _max_concurrency: int = 5
 var _parent_node: Node
@@ -54,7 +55,8 @@ func start(
 	workspace_path: String = "",
 	tc_max_rounds: int = 50,
 	concurrency: int = 5,
-	explore_separate: bool = false
+	explore_separate: bool = false,
+	bare_mode: bool = false
 ) -> void:
 	_model = model
 	_thinking = thinking
@@ -66,6 +68,7 @@ func start(
 	_workspace_path = workspace_path
 	_tc_max_rounds = tc_max_rounds
 	_explore_separate = explore_separate
+	_bare_mode = bare_mode
 	_total = count
 	_done = 0
 	_failed = 0
@@ -145,7 +148,7 @@ func _launch_worker() -> void:
 
 func _send_worker(wd: Dictionary) -> void:
 	var tools: Array = []
-	if wd.round < _tc_max_rounds:
+	if not _bare_mode and wd.round < _tc_max_rounds:
 		tools = APIBuilder.build_tools()
 
 	var api_messages := APIBuilder.build_api_messages(wd.messages)
