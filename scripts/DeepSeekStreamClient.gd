@@ -136,16 +136,18 @@ func _parse_event(line: String) -> void:
 		stop()
 		return
 
-	var parsed = JSON.parse_string(data_str) as Dictionary
-	if parsed == null:
+	var parsed = JSON.parse_string(data_str)
+	if parsed == null or typeof(parsed) != TYPE_DICTIONARY:
 		return
 
 	if parsed.has("usage"):
-		usage_received.emit(parsed["usage"] as Dictionary)
+		var u = parsed["usage"]
+		if typeof(u) == TYPE_DICTIONARY:
+			usage_received.emit(u)
 		return
 
 	var choices = parsed.get("choices", [])
-	if choices.is_empty():
+	if typeof(choices) != TYPE_ARRAY or choices.is_empty():
 		return
 
 	var delta = choices[0].get("delta", {})
