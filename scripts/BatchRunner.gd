@@ -1,7 +1,7 @@
 class_name BatchRunner
 extends RefCounted
 
-const APIBuilder = preload("res://scripts/APIBuilder.gd")
+const _APIBuilder = preload("res://scripts/APIBuilder.gd")
 
 signal progress_updated(done: int, failed: int, total: int, running: int)
 signal all_done(success: int, failed: int)

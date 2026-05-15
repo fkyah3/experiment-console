@@ -3,7 +3,7 @@ class_name ExperimentPanel
 
 signal experiment_saved(path: String)
 
-const APIBuilder = preload("res://scripts/APIBuilder.gd")
+const _APIBuilder = preload("res://scripts/APIBuilder.gd")
 const ExperimentModelScript = preload("res://scripts/ExperimentModel.gd")
 const BatchRunnerScript = preload("res://scripts/BatchRunner.gd")
 
