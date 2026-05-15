@@ -35,6 +35,9 @@ var _top_p: float = 1.0
 var _frequency_penalty: float = 0.0
 var _explore_separate: bool = false
 var _bare_mode: bool = false
+var _provider: String = "deepseek"
+var _provider_host: String = "api.deepseek.com"
+var _provider_path: String = "/chat/completions"
 
 var _sub_agent_messages: Array = []
 var _sub_agent_round: int = 0
@@ -77,6 +80,8 @@ var _sub_agent_max_rounds: int = 30
 func _ready() -> void:
 	_config = ConfigManager.new()
 	api_key = _config.api_key
+	_provider_host = _config.api_host
+	_provider_path = _config.api_path
 	_store = ExperimentStore.new(_config.experiments_path, _config.templates_path)
 	_model_data = ExperimentModelScript.new()
 	_batch_runner = BatchRunnerScript.new()
@@ -151,6 +156,30 @@ func _build_dynamic() -> void:
 	load_btn.pressed.connect(_on_load_file)
 	if hbox:
 		hbox.add_child(load_btn)
+
+	# Provider 下拉
+	var prov_label := Label.new()
+	prov_label.text = "Provider"
+	hbox.add_child(prov_label)
+	var prov_select := OptionButton.new()
+	prov_select.add_item("DeepSeek")
+	prov_select.add_item("OpenCode Go")
+	_provider = _config.api_host if _config.api_host.find("opencode") != -1 else "deepseek"
+	prov_select.selected = 1 if _config.api_host.find("opencode") != -1 else 0
+	prov_select.item_selected.connect(func(idx: int):
+		if idx == 0:
+			_provider = "deepseek"
+			_provider_host = "api.deepseek.com"
+			_provider_path = "/chat/completions"
+		else:
+			_provider = "opencode_go"
+			_provider_host = "opencode.ai"
+			_provider_path = "/zen/go/v1/chat/completions"
+		_config.api_host = _provider_host
+		_config.api_path = _provider_path
+		_config.save_config()
+	)
+	hbox.add_child(prov_select)
 
 	_params_add()
 	_populate_add_btn()
@@ -609,6 +638,8 @@ func _do_send() -> void:
 	_deepseek = DeepSeekStreamClient.new()
 	add_child(_deepseek)
 	_deepseek.api_key = api_key
+	_deepseek.api_host = _provider_host
+	_deepseek.api_path = _provider_path
 	_deepseek.content_chunk.connect(_on_content_chunk.bind(idx))
 	_deepseek.reasoning_chunk.connect(_on_reasoning_chunk.bind(idx))
 	_deepseek.stream_finished.connect(_on_stream_finished.bind(body_str))
@@ -660,6 +691,8 @@ func _sub_agent_send() -> void:
 	_deepseek = DeepSeekStreamClient.new()
 	add_child(_deepseek)
 	_deepseek.api_key = api_key
+	_deepseek.api_host = _provider_host
+	_deepseek.api_path = _provider_path
 	_deepseek.content_chunk.connect(_on_sub_agent_chunk)
 	_deepseek.stream_finished.connect(_on_sub_agent_done)
 	_deepseek.tool_calls_done.connect(_on_sub_agent_tc)
@@ -1196,7 +1229,7 @@ func _on_batch_run() -> void:
 	vbox.add_child(_make_label("运行次数"))
 	var count_input := SpinBox.new()
 	count_input.min_value = 1
-	count_input.max_value = 100
+	count_input.max_value = 10000
 	count_input.value = 20
 	count_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(count_input)

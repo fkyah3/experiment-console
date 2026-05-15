@@ -516,9 +516,14 @@ func _generate_summary() -> void:
 		lines.append("\n")
 
 		lines.append("## 每轮明细\n\n")
+		var MAX_ROWS: int = 100
+		var total_stats := _stats.size()
+		var displayed := mini(total_stats, MAX_ROWS)
+		var omitted := total_stats - displayed
 		lines.append("| # | reasoning_tokens | tool_rounds | duration | tok/s | reasoning_lang | output_lang | reasoning_chars | output_chars | reply 前80字 |\n")
 		lines.append("|:-:|:---------------:|:-----------:|:--------:|:-----:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
-		for s in _stats:
+		for i in displayed:
+			var s := _stats[i]
 			var idx: int = int(s.get("index", 0))
 			var rt: int = int(s.get("reasoning_tokens", 0))
 			var tool_rounds_val: int = int(s.get("tool_rounds", 0))
@@ -530,6 +535,9 @@ func _generate_summary() -> void:
 			var oc: int = int(s.get("output_chars", 0))
 			var reply: String = str(s.get("output_first_line", ""))
 			lines.append("| %d | %d | %d | %.1fs | %.1f | %s | %s | %d | %d | %s |\n" % [idx, rt, tool_rounds_val, float(dm) / 1000.0, tps, rl, ol, rc, oc, reply])
+
+		if omitted > 0:
+			lines.append("| ... | ... | ... | ... | ... | ... | ... | ... | ... | （省略 %d 行） |\n" % omitted)
 
 	lines.append("\n")
 	lines.append("---\n")

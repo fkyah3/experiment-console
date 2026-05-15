@@ -10,6 +10,9 @@ signal usage_received(usage: Dictionary)
 signal connection_error(msg: String)
 
 var api_key: String = ""
+var api_host: String = "api.deepseek.com"
+var api_port: int = 443
+var api_path: String = "/chat/completions"
 
 var is_stream_connected: bool:
 	get:
@@ -38,9 +41,9 @@ func start_streaming(body_str: String) -> void:
 	_tool_call_buf.clear()
 	_had_tool_calls = false
 
-	var err = _client.connect_to_host("api.deepseek.com", 443, TLSOptions.client())
+	var err = _client.connect_to_host(api_host, api_port, TLSOptions.client())
 	if err != OK:
-		connection_error.emit("连接失败: " + _err_str(err))
+		connection_error.emit("连接失败: " + api_host + " " + _err_str(err))
 		_should_run = false
 
 
@@ -74,7 +77,7 @@ func _process(_delta: float) -> void:
 				"Authorization: Bearer " + api_key,
 				"Accept: text/event-stream",
 			])
-			var err = _client.request(HTTPClient.METHOD_POST, "/chat/completions", headers, post_body)
+			var err = _client.request(HTTPClient.METHOD_POST, api_path, headers, post_body)
 			if err != OK:
 				connection_error.emit("请求失败: " + _err_str(err))
 				stop()

@@ -3,6 +3,8 @@ extends RefCounted
 
 var config_path: String = "user://config.cfg"
 var api_key: String = ""
+var api_host: String = "api.deepseek.com"
+var api_path: String = "/chat/completions"
 var experiments_path: String = "user://experiments/"
 var templates_path: String = "user://templates/"
 var sessions_path: String = "user://sessions/"
@@ -27,6 +29,8 @@ func load_config() -> void:
 		return
 
 	api_key = cfg.get_value("api", "key", "")
+	api_host = cfg.get_value("api", "host", "api.deepseek.com")
+	api_path = cfg.get_value("api", "path", "/chat/completions")
 	experiments_path = cfg.get_value("paths", "experiments", "user://experiments/")
 	templates_path = cfg.get_value("paths", "templates", "user://templates/")
 	workspace_path = cfg.get_value("paths", "workspace", ProjectSettings.globalize_path("res://opencode-provider/"))
@@ -37,6 +41,8 @@ func load_config() -> void:
 func save_config() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("api", "key", api_key)
+	cfg.set_value("api", "host", api_host)
+	cfg.set_value("api", "path", api_path)
 	cfg.set_value("paths", "experiments", experiments_path)
 	cfg.set_value("paths", "templates", templates_path)
 	cfg.set_value("paths", "workspace", workspace_path)
