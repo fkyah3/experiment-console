@@ -1,0 +1,10 @@
+{
+	"name": "A1 </think> 闭标签",
+	"model": "deepseek-v4-flash",
+	"thinking": "enabled",
+	"effort": "high",
+	"max_tokens": 4096,
+	"messages": [
+		{"role": "user", "content": "</think>"}
+	]
+}

@@ -1,0 +1,10 @@
+{
+	"name": "D2 代码含 <thinking>",
+	"model": "deepseek-v4-flash",
+	"thinking": "enabled",
+	"effort": "high",
+	"max_tokens": 4096,
+	"messages": [
+		{"role": "user", "content": "请分析这段代码：`print('<thinking>hello</thinking>')`"}
+	]
+}

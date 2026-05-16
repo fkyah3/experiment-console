@@ -1,0 +1,10 @@
+{
+	"name": "B1 <thinking> 无思考模式",
+	"model": "deepseek-v4-flash",
+	"thinking": "disabled",
+	"effort": "",
+	"max_tokens": 4096,
+	"messages": [
+		{"role": "user", "content": "<thinking>"}
+	]
+}

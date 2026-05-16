@@ -1,0 +1,10 @@
+{
+	"name": "A5 纯英文基线",
+	"model": "deepseek-v4-flash",
+	"thinking": "enabled",
+	"effort": "high",
+	"max_tokens": 4096,
+	"messages": [
+		{"role": "user", "content": "Hello, how are you?"}
+	]
+}
