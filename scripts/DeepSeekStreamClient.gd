@@ -156,6 +156,14 @@ func _parse_event(line: String) -> void:
 		reasoning_chunk.emit(delta["reasoning_content"])
 	if delta.has("content") and delta["content"] != null:
 		content_chunk.emit(delta["content"])
+
+	# 部分 API（如 OpenCode Go）可能一次性下发完整 message 而非流式 delta
+	if not delta.has("content") or delta["content"] == null:
+		var msg = choices[0].get("message", {})
+		if msg.has("content") and msg["content"] != null and not str(msg["content"]).is_empty():
+			content_chunk.emit(str(msg["content"]))
+		if msg.has("reasoning_content") and msg["reasoning_content"] != null and not str(msg["reasoning_content"]).is_empty():
+			reasoning_chunk.emit(str(msg["reasoning_content"]))
 	if delta.has("tool_calls") and delta["tool_calls"] != null:
 		_had_tool_calls = true
 		var tc_array: Array = delta["tool_calls"]
