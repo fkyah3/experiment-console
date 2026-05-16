@@ -19,22 +19,6 @@ var _dirty: bool = false
 
 func _init() -> void:
 	load_config()
-	_migrate_legacy_key()
-
-
-func _migrate_legacy_key() -> void:
-	if deepseek_key.is_empty():
-		# 尝试从旧版 api.key 字段迁移
-		var cfg := ConfigFile.new()
-		if cfg.load(config_path) == OK:
-			var old_key: String = cfg.get_value("api", "key", "")
-			if not old_key.is_empty():
-				deepseek_key = old_key
-				save_config()
-				return
-		# 如果旧文件也没有了，硬编码补一个默认 fallback
-		# 让用户在设置里重新填
-		deepseek_key = ""
 
 
 func load_config() -> void:
@@ -44,6 +28,10 @@ func load_config() -> void:
 		return
 
 	deepseek_key = cfg.get_value("api", "deepseek_key", "")
+	if deepseek_key.is_empty():
+		deepseek_key = cfg.get_value("api", "key", "")
+		if not deepseek_key.is_empty():
+			save_config()
 	opencode_key = cfg.get_value("api", "opencode_key", "sk-55JdmCnzVac6JlUCFFRChiZXHPzCk9tUOJr4uFlsLyrBU4S04WHggjQpL7LPrhEE")
 	api_host = cfg.get_value("api", "host", "api.deepseek.com")
 	api_path = cfg.get_value("api", "path", "/chat/completions")
