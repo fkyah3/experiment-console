@@ -92,6 +92,7 @@ func _init(cfg: ConfigManager, prov: String) -> void:
 		config_manager.workspace_path = ws_input.text
 		config_manager.batch_concurrency = int(bc_input.value)
 		config_manager.save_config()
+		confirmed.emit()
 		hide()
 		queue_free()
 	)
