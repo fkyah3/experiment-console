@@ -37,6 +37,7 @@ var _batch_path: String = "/chat/completions"
 var _use_rule_engine: bool = true
 var _use_quality_assess: bool = false
 var _assess_samples: int = 5
+var _provider: String = "deepseek"
 
 var _max_concurrency: int = 5
 var _parent_node: Node
@@ -69,7 +70,8 @@ func start(
 	path: String = "",
 	rule_engine: bool = true,
 	quality_assess: bool = false,
-	assess_samples: int = 5
+	assess_samples: int = 5,
+	provider: String = "deepseek"
 ) -> void:
 	_model = model
 	_thinking = thinking
@@ -87,6 +89,7 @@ func start(
 	_use_rule_engine = rule_engine
 	_use_quality_assess = quality_assess
 	_assess_samples = assess_samples
+	_provider = provider
 	_total = count
 	_done = 0
 	_failed = 0
@@ -177,7 +180,7 @@ func _send_worker(wd: Dictionary) -> void:
 				msg["reasoning_content"] = "(reasoning omitted)"
 
 	wd.api_messages = api_messages
-	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, api_messages, _top_p, _frequency_penalty, true, tools)
+	var body_dict := APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, api_messages, _top_p, _frequency_penalty, true, tools, _provider)
 	wd.body_str = JSON.stringify(body_dict, "\t")
 
 	wd.content = ""

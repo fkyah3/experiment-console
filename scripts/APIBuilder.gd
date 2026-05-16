@@ -59,7 +59,8 @@ static func build_body_dict(
 	top_p: float = 1.0,
 	frequency_penalty: float = 0.0,
 	stream: bool = true,
-	tools: Array = []
+	tools: Array = [],
+	provider: String = "deepseek"
 ) -> Dictionary:
 	var body := {
 		"model": model,
@@ -71,7 +72,8 @@ static func build_body_dict(
 		if effort != "不传":
 			body["reasoning_effort"] = effort
 	elif thinking == "无思考模式":
-		body["thinking"] = {"type": "disabled"}
+		if provider == "deepseek":
+			body["thinking"] = {"type": "disabled"}
 		body["top_p"] = top_p
 		body["frequency_penalty"] = frequency_penalty
 	body["max_tokens"] = max_tokens

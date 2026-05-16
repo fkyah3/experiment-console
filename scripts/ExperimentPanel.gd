@@ -390,7 +390,7 @@ func _do_send() -> void:
 			if msg.get("role") == "assistant" and not msg.has("reasoning_content"):
 				msg["reasoning_content"] = "(reasoning omitted)"
 
-	var body_dict := _APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, msgs_to_send, _top_p, _frequency_penalty, true, tools)
+	var body_dict := _APIBuilder.build_body_dict(_model, _thinking, _effort, _max_tokens, _temperature, msgs_to_send, _top_p, _frequency_penalty, true, tools, _provider)
 	var body_str := JSON.stringify(body_dict, "\t")
 	log_request.text = body_str
 
@@ -449,7 +449,7 @@ func _sub_agent_send() -> void:
 			}
 		}
 	}]
-	var body_dict := _APIBuilder.build_body_dict(_model, "无思考模式", "high", _max_tokens, _temperature, api_msgs, _top_p, _frequency_penalty, true, tools)
+	var body_dict := _APIBuilder.build_body_dict(_model, "无思考模式", "high", _max_tokens, _temperature, api_msgs, _top_p, _frequency_penalty, true, tools, _provider)
 	var body_str := JSON.stringify(body_dict, "\t")
 	log_request.text = body_str
 	_set_status("子 agent 探索中... (第 %d 轮)" % _sub_agent_round)
@@ -824,7 +824,8 @@ func _start_batch(count: int, batch_name: String, rule_engine: bool, quality_ass
 		_config.workspace_path, actual_max_rounds,
 		_config.batch_concurrency, _explore_separate,
 		_bare_mode, _config.batch_host, _config.batch_path,
-		rule_engine, quality_assess, assess_samples
+		rule_engine, quality_assess, assess_samples,
+		_provider
 	)
 
 
