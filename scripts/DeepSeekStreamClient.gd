@@ -127,8 +127,6 @@ func _parse_event(line: String) -> void:
 		return
 
 	var data_str := line.substr(6).strip_edges()
-	if api_host != "api.deepseek.com":
-		print("[SSE RAW] ", data_str)
 
 	if data_str == "[DONE]":
 		if not _tool_call_buf.is_empty():
