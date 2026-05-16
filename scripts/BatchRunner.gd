@@ -2,6 +2,9 @@ class_name BatchRunner
 extends RefCounted
 
 const _APIBuilder = preload("res://scripts/APIBuilder.gd")
+const _ResultRuleEngine = preload("res://scripts/Core/ResultRuleEngine.gd")
+const _QualityAssessor = preload("res://scripts/Core/QualityAssessor.gd")
+const _SummaryGenerator = preload("res://scripts/Core/SummaryGenerator.gd")
 
 signal progress_updated(done: int, failed: int, total: int, running: int)
 signal all_done(success: int, failed: int)
@@ -31,6 +34,9 @@ var _explore_separate: bool = false
 var _bare_mode: bool = false
 var _batch_host: String = "api.deepseek.com"
 var _batch_path: String = "/chat/completions"
+var _use_rule_engine: bool = true
+var _use_quality_assess: bool = false
+var _assess_samples: int = 5
 
 var _max_concurrency: int = 5
 var _parent_node: Node
@@ -60,7 +66,10 @@ func start(
 	explore_separate: bool = false,
 	bare_mode: bool = false,
 	host: String = "",
-	path: String = ""
+	path: String = "",
+	rule_engine: bool = true,
+	quality_assess: bool = false,
+	assess_samples: int = 5
 ) -> void:
 	_model = model
 	_thinking = thinking
@@ -75,6 +84,9 @@ func start(
 	_bare_mode = bare_mode
 	_batch_host = host if host != "" else _batch_host
 	_batch_path = path if path != "" else _batch_path
+	_use_rule_engine = rule_engine
+	_use_quality_assess = quality_assess
+	_assess_samples = assess_samples
 	_total = count
 	_done = 0
 	_failed = 0
@@ -388,12 +400,169 @@ func _finish(wd: Dictionary) -> void:
 	_dispatch_progress()
 
 	if _done + _failed >= _total:
-		_generate_summary()
-		all_done.emit(_done, _failed)
+		_generate_and_save_summary()
 		return
 
 	if not _queue.is_empty():
 		_launch_worker()
+
+
+func _generate_and_save_summary() -> void:
+	var config := {
+		"total_duration_ms": Time.get_ticks_msec() - _start_ms
+	}
+
+	# 规则引擎
+	var quality_report: String = ""
+	if _use_rule_engine:
+		var engine := _ResultRuleEngine.new()
+		var marks := engine.evaluate(_stats)
+		var suspect_count := 0
+		for m in marks:
+			if m["level"] != "normal":
+				suspect_count += 1
+		# 规则结果内联到报告
+		if suspect_count > 0:
+			quality_report += "## 规则引擎结果\n\n"
+			quality_report += "可疑样本：%d / %d\n\n" % [suspect_count, _stats.size()]
+
+	# 质量评估（可选）
+	if _use_quality_assess and not _stats.is_empty():
+		var assessor := _QualityAssessor.new()
+		assessor.enabled = true
+		assessor.sample_count = _assess_samples
+		assessor.api_key = _api_key
+		assessor.api_host = _batch_host
+		assessor.api_path = _batch_path
+		assessor.parent_node = _parent_node
+		# 因为 assess 是异步的，我们在 _generate_summary 外部处理
+		# 简化：同步调用每个样本
+		var report := await _run_quality_assessment_sync(assessor)
+		if not report.is_empty():
+			quality_report += report
+
+	_SummaryGenerator.generate(
+		config, _stats,
+		_model, _thinking, _effort, _max_tokens, _temperature,
+		_tc_max_rounds, _total, _done, _failed,
+		_prototype_messages, _batch_dir,
+		quality_report
+	)
+	all_done.emit(_done, _failed)
+
+
+func _run_quality_assessment_sync(assessor) -> String:
+	# 给每个样本补充 user_msg 字段
+	var enhanced: Array[Dictionary] = []
+	for i in _stats.size():
+		var s := _stats[i].duplicate()
+		if i < _prototype_messages.size():
+			for m in _prototype_messages:
+				if m.get("role", "") == "user":
+					s["user_msg"] = str(m.get("content", ""))
+					break
+			if not s.has("user_msg"):
+				s["user_msg"] = ""
+		else:
+			s["user_msg"] = ""
+		enhanced.append(s)
+
+	_stats = enhanced
+
+	var indices: Array[int] = assessor.sample_from_stats(_stats)
+	var evaluations: Array[Dictionary] = []
+
+	for idx in indices:
+		var sample := _stats[idx]
+		var user_msg: String = str(sample.get("user_msg", ""))
+		var content: String = str(sample.get("output_first_line", ""))
+		var reasoning: String = str(sample.get("reasoning_first_line", ""))
+
+		var prompt_text := "用户消息：" + user_msg.left(2000) + "\n\n"
+		prompt_text += "AI 回复（content）：" + content.left(2000) + "\n\n"
+		prompt_text += "AI 推理（reasoning）：" + reasoning.left(500) + "\n\n"
+		prompt_text += """请评估以上 AI 回复的质量。只输出 JSON，格式：
+{
+  "score": 0-10,
+  "issues": ["问题描述"],
+  "language": "zh|en|mixed",
+  "suggestion": "改进建议"
+}"""
+
+		var body := {
+			"model": "deepseek-v4-flash",
+			"messages": [{"role": "user", "content": prompt_text}],
+			"stream": false,
+			"max_tokens": 200,
+			"temperature": 0.0,
+			"thinking": {"type": "disabled"},
+		}
+
+		var http := HTTPRequest.new()
+		_parent_node.add_child(http)
+
+		var headers := PackedStringArray([
+			"Content-Type: application/json",
+			"Authorization: Bearer " + _api_key,
+		])
+		var url := "https://" + _batch_host + _batch_path
+		var err := http.request(url, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
+		if err != OK:
+			http.queue_free()
+			evaluations.append({"index": idx, "score": 0, "issues": ["请求失败"], "language": "unknown", "suggestion": ""})
+			continue
+
+		var response: Array = await http.request_completed
+		http.queue_free()
+
+		var result: Dictionary = {"score": 0, "issues": ["评估失败"], "language": "unknown", "suggestion": ""}
+		if response[0] == HTTPRequest.RESULT_SUCCESS:
+			var raw: String = response[3].get_string_from_utf8().strip_edges()
+			var parsed = JSON.parse_string(raw)
+			if parsed != null and typeof(parsed) == TYPE_DICTIONARY:
+				var choices = parsed.get("choices")
+				if choices != null and typeof(choices) == TYPE_ARRAY and not choices.is_empty():
+					var msg: Dictionary = choices[0].get("message", {})
+					var text: String = msg.get("content", "").strip_edges()
+					if not text.is_empty():
+						var parsed_result = JSON.parse_string(text)
+						if parsed_result != null and typeof(parsed_result) == TYPE_DICTIONARY:
+							result = parsed_result
+
+		result["index"] = idx
+		evaluations.append(result)
+
+	# 构建报告
+	if evaluations.is_empty():
+		return ""
+
+	var lines: Array[String] = []
+	lines.append("## 质量评估（采样 %d/%d）\n\n" % [indices.size(), _stats.size()])
+	lines.append("| # | 评分 | 语言 | 问题 |\n")
+	lines.append("|:-:|:----:|:-----|:-----|\n")
+
+	var sum_score: float = 0.0
+	var lang_counts: Dictionary = {"zh": 0, "en": 0, "mixed": 0, "unknown": 0}
+
+	for ev in evaluations:
+		var e_idx: int = int(ev.get("index", 0))
+		var score: int = int(ev.get("score", 0))
+		var lang: String = str(ev.get("language", "unknown"))
+		var issues: Array = ev.get("issues", [])
+		var issues_str: String = "无异常" if issues.is_empty() else "；".join(issues)
+
+		sum_score += score
+		if lang_counts.has(lang):
+			lang_counts[lang] += 1
+
+		lines.append("| %d | %d/10 | %s | %s |\n" % [e_idx, score, lang, issues_str])
+
+	lines.append("\n")
+	var avg_score: float = sum_score / float(max(1, evaluations.size()))
+	lines.append("**平均评分：** %.1f/10\n" % avg_score)
+	lines.append("\n")
+
+	return "".join(lines)
 
 
 func _calc_stats(wd: Dictionary) -> Dictionary:
@@ -423,166 +592,5 @@ func _calc_stats(wd: Dictionary) -> Dictionary:
 	return s
 
 
-func _generate_summary() -> void:
-	var lines: Array[String] = []
-	lines.append("# 批量实验汇总\n")
-	lines.append("---\n")
-	lines.append("\n")
-	var now := Time.get_datetime_dict_from_system()
-	var created := "%04d-%02d-%02d %02d:%02d:%02d" % [now.year, now.month, now.day, now.hour, now.minute, now.second]
-	lines.append("- **生成时间**: %s\n" % created)
-	lines.append("- **模型**: %s\n" % _model)
-	lines.append("- **思考模式**: %s\n" % _thinking)
-	lines.append("- **推理强度**: %s\n" % _effort)
-	lines.append("- **max_tokens**: %d\n" % _max_tokens)
-	lines.append("- **温度**: %.1f\n" % _temperature)
-	lines.append("- **工具调用上限**: %d\n" % _tc_max_rounds)
-	lines.append("- **总次数**: %d\n" % _total)
-	lines.append("- **成功**: %d\n" % _done)
-	lines.append("- **失败**: %d\n" % _failed)
-	lines.append("\n")
-
-	lines.append("## 本次使用的 prompt\n\n")
-	lines.append("```\n")
-	var has_prompt := false
-	for m in _prototype_messages:
-		var role: String = str(m.get("role", ""))
-		var content: String = str(m.get("content", ""))
-		var reasoning: String = str(m.get("reasoning", ""))
-		if role == "system":
-			lines.append("[system]\n%s\n\n" % content)
-			has_prompt = true
-		elif role == "user":
-			lines.append("[user]\n%s\n\n" % content)
-			has_prompt = true
-		elif role == "assistant" and not content.is_empty():
-			lines.append("[assistant]\n%s\n\n" % content)
-		elif role == "assistant" and not reasoning.is_empty():
-			lines.append("[assistant reasoning]\n%s\n\n" % reasoning)
-		elif role == "tool":
-			lines.append("[tool]\n%s\n\n" % content)
-	if not has_prompt:
-		lines.append("（空）\n")
-	lines.append("```\n")
-	lines.append("\n")
-
-	if _stats.is_empty():
-		lines.append("无成功数据。\n")
-	else:
-		var reasoning_vals: Array[int] = []
-		var prompt_vals: Array[int] = []
-		var completion_vals: Array[int] = []
-		var total_vals: Array[int] = []
-		var tool_rounds_vals: Array[int] = []
-		var zh_count: int = 0
-		var en_count: int = 0
-		for s in _stats:
-			var rt: int = int(s.get("reasoning_tokens", 0))
-			reasoning_vals.append(rt)
-			prompt_vals.append(int(s.get("prompt_tokens", 0)))
-			completion_vals.append(int(s.get("completion_tokens", 0)))
-			total_vals.append(int(s.get("total_tokens", 0)))
-			tool_rounds_vals.append(int(s.get("tool_rounds", 0)))
-			match s.get("reasoning_language", ""):
-				"zh": zh_count += 1
-				"en": en_count += 1
-
-		var r_min: int = reasoning_vals.min()
-		var r_max: int = reasoning_vals.max()
-		var r_sum: int = 0
-		for v in reasoning_vals: r_sum += v
-		var r_avg: float = float(r_sum) / float(reasoning_vals.size())
-		var r_median: float = _median(reasoning_vals)
-
-		lines.append("## 汇总统计\n\n")
-		lines.append("| 指标 | 值 |\n")
-		lines.append("|:-----|:----|\n")
-		lines.append("| reasoning_tokens 最小值 | %d |\n" % r_min)
-		lines.append("| reasoning_tokens 最大值 | %d |\n" % r_max)
-		lines.append("| reasoning_tokens 平均值 | %.1f |\n" % r_avg)
-		lines.append("| reasoning_tokens 中位数 | %.1f |\n" % r_median)
-		lines.append("| 波动倍数（max/min） | %.1f |\n" % (float(r_max) / float(max(1, r_min))))
-		lines.append("| prompt_tokens 平均值 | %.1f |\n" % (_avg(prompt_vals)))
-		lines.append("| completion_tokens 平均值 | %.1f |\n" % (_avg(completion_vals)))
-		lines.append("| total_tokens 平均值 | %.1f |\n" % (_avg(total_vals)))
-		lines.append("| reasoning 中文占比 | %d / %d (%.1f%%) |\n" % [zh_count, _stats.size(), float(zh_count) / float(_stats.size()) * 100.0])
-		lines.append("| reasoning 英文占比 | %d / %d (%.1f%%) |\n" % [en_count, _stats.size(), float(en_count) / float(_stats.size()) * 100.0])
-		lines.append("| 工具调用轮数 平均值 | %.1f |\n" % (_avg(tool_rounds_vals)))
-		lines.append("\n")
-
-		var total_duration_ms: int = Time.get_ticks_msec() - _start_ms
-		var avg_duration_ms: float = float(total_duration_ms) / float(max(1, _stats.size()))
-		var total_tok_sum: int = _sum(total_vals)
-
-		lines.append("## 耗时与速度\n\n")
-		lines.append("| 指标 | 值 |\n")
-		lines.append("|:-----|:----|\n")
-		lines.append("| 总用时 | %.1f 秒 |\n" % (float(total_duration_ms) / 1000.0))
-		lines.append("| 平均每轮 | %.1f 秒 |\n" % (avg_duration_ms / 1000.0))
-		lines.append("| 总 tokens | %d |\n" % total_tok_sum)
-		lines.append("| 平均 token 速度 | %.1f tok/s |\n" % (float(total_tok_sum) / (float(total_duration_ms) / 1000.0) if total_duration_ms > 0 else 0.0))
-		lines.append("\n")
-
-		lines.append("## 每轮明细\n\n")
-		var MAX_ROWS: int = 100
-		var total_stats := _stats.size()
-		var displayed := mini(total_stats, MAX_ROWS)
-		var omitted := total_stats - displayed
-		lines.append("| # | reasoning_tokens | tool_rounds | duration | tok/s | reasoning_lang | output_lang | reasoning_chars | output_chars | reply 前80字 |\n")
-		lines.append("|:-:|:---------------:|:-----------:|:--------:|:-----:|:--------------:|:-----------:|:---------------:|:------------:|:----|\n")
-		for i in displayed:
-			var s := _stats[i]
-			var idx: int = int(s.get("index", 0))
-			var rt: int = int(s.get("reasoning_tokens", 0))
-			var tool_rounds_val: int = int(s.get("tool_rounds", 0))
-			var dm: int = int(s.get("duration_ms", 0))
-			var tps: float = float(s.get("tokens_per_sec", 0.0))
-			var rl: String = str(s.get("reasoning_language", "?"))
-			var ol: String = str(s.get("output_language", "?"))
-			var rc: int = int(s.get("reasoning_chars", 0))
-			var oc: int = int(s.get("output_chars", 0))
-			var reply: String = str(s.get("output_first_line", ""))
-			lines.append("| %d | %d | %d | %.1fs | %.1f | %s | %s | %d | %d | %s |\n" % [idx, rt, tool_rounds_val, float(dm) / 1000.0, tps, rl, ol, rc, oc, reply])
-
-		if omitted > 0:
-			lines.append("| ... | ... | ... | ... | ... | ... | ... | ... | ... | （省略 %d 行） |\n" % omitted)
-
-	lines.append("\n")
-	lines.append("---\n")
-
-	var summary_path := _batch_dir.path_join("_summary.md")
-	var file := FileAccess.open(summary_path, FileAccess.WRITE)
-	if file:
-		for line in lines:
-			file.store_string(line)
-		file.close()
-
-	_dispatch_progress()
-
-
 func _dispatch_progress() -> void:
 	progress_updated.emit(_done, _failed, _total, _running)
-
-
-func _sum(arr: Array[int]) -> int:
-	var total := 0
-	for v in arr:
-		total += v
-	return total
-
-
-func _avg(arr: Array[int]) -> float:
-	if arr.is_empty():
-		return 0.0
-	return float(_sum(arr)) / float(arr.size())
-
-
-func _median(arr: Array[int]) -> float:
-	if arr.is_empty():
-		return 0.0
-	var sorted := arr.duplicate()
-	sorted.sort()
-	var mid := int(sorted.size() * 0.5)
-	if sorted.size() % 2 == 0:
-		return (sorted[mid - 1] + sorted[mid]) / 2.0
-	return float(sorted[mid])
