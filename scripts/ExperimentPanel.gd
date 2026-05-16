@@ -837,8 +837,12 @@ func _on_batch_finished(success: int, failed: int) -> void:
 
 
 func _toggle_reader() -> void:
-	batch_reader.visible = not batch_reader.visible
-	batch_reader.refresh()
+	var showing_reader: bool = batch_reader.visible
+	batch_reader.visible = not showing_reader
+	reader_btn.text = "🔬 实验台" if batch_reader.visible else "📖 浏览报告"
+	if batch_reader.visible:
+		batch_reader.set_experiments_dir(_config.experiments_path)
+		batch_reader._refresh_batch_list()
 
 
 func _list_dir(dir_path: String) -> String:
