@@ -19,6 +19,17 @@ var _dirty: bool = false
 
 func _init() -> void:
 	load_config()
+	_migrate_legacy_key()
+
+
+func _migrate_legacy_key() -> void:
+	if deepseek_key.is_empty():
+		var cfg := ConfigFile.new()
+		if cfg.load(config_path) == OK:
+			var old_key := cfg.get_value("api", "key", "")
+			if not old_key.is_empty():
+				deepseek_key = old_key
+				save_config()
 
 
 func load_config() -> void:
