@@ -5,6 +5,7 @@ const _APIBuilder = preload("res://scripts/APIBuilder.gd")
 const _ResultRuleEngine = preload("res://scripts/Core/ResultRuleEngine.gd")
 const _QualityAssessor = preload("res://scripts/Core/QualityAssessor.gd")
 const _SummaryGenerator = preload("res://scripts/Core/SummaryGenerator.gd")
+const _FingerprintRecorder = preload("res://scripts/Core/FingerprintRecorder.gd")
 
 signal progress_updated(done: int, failed: int, total: int, running: int)
 signal all_done(success: int, failed: int)
@@ -395,6 +396,7 @@ func _finish(wd: Dictionary) -> void:
 			wd.api_messages, wd.messages,
 			wd.body_str, wd.response_body, wd.usage, ""
 		)
+		_FingerprintRecorder.save_meta(_batch_dir, wd.index, wd.usage)
 		_stats.append(_calc_stats(wd))
 		_done += 1
 	else:

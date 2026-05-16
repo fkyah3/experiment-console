@@ -25,6 +25,7 @@ var _request_sent: bool = false
 var _body_str: String = ""
 var _tool_call_buf: Array[Dictionary] = []
 var _had_tool_calls: bool = false
+var _system_fingerprint: String = ""
 
 
 func _ready() -> void:
@@ -40,6 +41,7 @@ func start_streaming(body_str: String) -> void:
 	_buffer = ""
 	_tool_call_buf.clear()
 	_had_tool_calls = false
+	_system_fingerprint = ""
 
 	var err = _client.connect_to_host(api_host, api_port, TLSOptions.client())
 	if err != OK:
@@ -140,9 +142,13 @@ func _parse_event(line: String) -> void:
 	if parsed == null or typeof(parsed) != TYPE_DICTIONARY:
 		return
 
+	if parsed.has("system_fingerprint") and parsed["system_fingerprint"] != null:
+		_system_fingerprint = str(parsed["system_fingerprint"])
+
 	if parsed.has("usage"):
 		var u = parsed["usage"]
 		if typeof(u) == TYPE_DICTIONARY:
+			u["system_fingerprint"] = _system_fingerprint
 			usage_received.emit(u)
 		return
 
