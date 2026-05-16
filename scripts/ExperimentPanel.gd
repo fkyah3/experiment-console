@@ -838,8 +838,12 @@ func _on_batch_finished(success: int, failed: int) -> void:
 
 
 func _toggle_reader() -> void:
+	var main_content := $VBox
+	if main_content == null or batch_reader == null:
+		return
 	var showing_reader: bool = batch_reader.visible
 	batch_reader.visible = not showing_reader
+	main_content.visible = showing_reader
 	reader_btn.text = "🔬 实验台" if batch_reader.visible else "📖 浏览报告"
 	if batch_reader.visible:
 		batch_reader.set_experiments_dir(_config.experiments_path)
