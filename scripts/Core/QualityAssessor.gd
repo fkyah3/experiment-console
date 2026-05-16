@@ -1,7 +1,6 @@
 class_name QualityAssessor
 extends RefCounted
 
-signal sample_evaluated(idx: int, result: Dictionary)
 signal finished(report_md: String)
 
 enum SampleStrategy { TOP, RANDOM, ALL }
@@ -43,7 +42,6 @@ func assess_batch(stats: Array[Dictionary], _results_dir: String) -> void:
 
 	var sample_indices := sample_from_stats(stats)
 	var evaluations: Array[Dictionary] = []
-	var done_count := 0
 
 	for idx in sample_indices:
 		_evaluate_one(idx, stats, func(result: Dictionary):

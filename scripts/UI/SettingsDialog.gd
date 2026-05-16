@@ -99,4 +99,4 @@ func _init(cfg: ConfigManager, prov: String) -> void:
 
 	add_child(vbox)
 	confirmed.connect(queue_free)
-	popup_centered()
+	call_deferred("popup_centered")
