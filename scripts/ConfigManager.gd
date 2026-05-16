@@ -27,7 +27,7 @@ func _migrate_legacy_key() -> void:
 		# 尝试从旧版 api.key 字段迁移
 		var cfg := ConfigFile.new()
 		if cfg.load(config_path) == OK:
-			var old_key := cfg.get_value("api", "key", "")
+			var old_key: String = cfg.get_value("api", "key", "")
 			if not old_key.is_empty():
 				deepseek_key = old_key
 				save_config()
@@ -38,7 +38,7 @@ func _migrate_legacy_key() -> void:
 
 
 func load_config() -> void:
-	var cfg := ConfigFile.new()
+	var cfg: ConfigFile = ConfigFile.new()
 	var err := cfg.load(config_path)
 	if err != OK:
 		return
@@ -57,7 +57,7 @@ func load_config() -> void:
 
 
 func save_config() -> void:
-	var cfg := ConfigFile.new()
+	var cfg: ConfigFile = ConfigFile.new()
 	cfg.set_value("api", "deepseek_key", deepseek_key)
 	cfg.set_value("api", "opencode_key", opencode_key)
 	cfg.set_value("api", "host", api_host)
