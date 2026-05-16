@@ -45,7 +45,7 @@ func _init(data: Dictionary, idx: int) -> void:
 	vbox.add_child(done_btn)
 
 	add_child(vbox)
-	popup_centered()
+	call_deferred("popup_centered")
 
 
 func _make_label(text: String) -> Label:
